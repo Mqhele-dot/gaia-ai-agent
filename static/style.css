@@ -1,32 +1,44 @@
 
 body {
-    background-color: #f4f5f7;
-    color: #1c1e21;
-    font-family: "Segoe UI", sans-serif;
-    padding: 2rem;
+    font-family: Arial, sans-serif;
+    margin: 0;
+    background: #f8f9fa;
+    color: #212529;
 }
-.container {
-    max-width: 800px;
-    margin: auto;
+header {
+    background: #343a40;
+    color: #fff;
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
-.status-box {
-    background: #ddd;
-    padding: 0.5rem;
-    margin-bottom: 1rem;
+button {
+    padding: 0.5rem 1rem;
+    margin: 0.25rem;
+    border: none;
+    cursor: pointer;
 }
 textarea, input[type="text"] {
     width: 100%;
-    margin-top: 0.5rem;
+    margin: 0.5rem 0;
     padding: 0.5rem;
+    border-radius: 0.25rem;
+    border: 1px solid #ced4da;
 }
-.btn-group {
-    margin: 1rem 0;
+.button-row {
+    display: flex;
+    flex-wrap: wrap;
 }
-button {
-    margin-right: 1rem;
-    padding: 0.5rem 1rem;
+.status-card {
+    background: #dee2e6;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
 }
-ul {
-    background: #e6f7ff;
-    padding: 1rem;
+[data-theme="dark"] {
+    background: #212529;
+    color: #f8f9fa;
+}
+[data-theme="dark"] header {
+    background: #121416;
 }

@@ -1,2 +1,2 @@
-# Gaia Project
-Autonomous agent that scrapes, learns, and evolves technology.
+# Gaia Agent Dashboard
+This project visualizes and manages autonomous AI agent activities.
