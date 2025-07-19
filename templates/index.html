@@ -1,10 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Gaia Agent Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css">
-    <script src="/static/script.js" defer></script>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div class="container">
@@ -12,14 +12,15 @@
         <div class="status-box"><strong>Status:</strong> <span id="status">Idle</span></div>
         <textarea id="capsuleInput" placeholder="Enter upgrade capsule..."></textarea>
         <input type="text" id="tagInput" placeholder="Optional tag (e.g., logic, UI, model)">
-        <div class="button-group">
+        <div class="btn-group">
             <button onclick="saveCapsule()">Save Capsule</button>
-            <button onclick="loadCapsules()">Load History</button>
+            <button onclick="loadHistory()">Load History</button>
             <button onclick="analyzeCapsule()">Analyze Capsule</button>
             <button onclick="exportCapsules()">Export Capsules</button>
         </div>
-        <div id="historyTitle"><h2>Capsule History</h2></div>
-        <div id="capsuleHistory"></div>
+        <h2>Capsule History</h2>
+        <ul id="capsuleHistory"></ul>
     </div>
+    <script src="/static/app.js"></script>
 </body>
 </html>
