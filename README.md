@@ -1,2 +1,2 @@
 # Gaia Agent Dashboard
-This project visualizes and manages autonomous AI agent activities.
+Self-evolving AI agent dashboard for economic and environmental tech.
