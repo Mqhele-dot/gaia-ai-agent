@@ -1,44 +1,43 @@
-
-function saveCapsule() {
-  const content = document.getElementById("capsuleInput").value;
-  const tag = document.getElementById("capsuleTag").value;
-  fetch("/save_capsule", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, tag })
-  })
-  .then(res => res.json())
-  .then(data => {
-    document.getElementById("status").innerText = "Capsule Saved";
-    loadCapsules();
-  });
-}
-
-function loadCapsules() {
-  fetch("/load_capsules")
-    .then(res => res.json())
-    .then(data => {
-      const container = document.getElementById("capsuleHistory");
-      container.innerHTML = "<h3>Capsule History</h3>" + data.map(c =>
-        \`<div>[${c.timestamp}] (${c.tag})</div>\`
-      ).join("");
+async function saveCapsule() {
+    const text = document.getElementById("capsuleInput").value;
+    const tag = document.getElementById("tagInput").value;
+    const res = await fetch("/save_capsule", {
+        method: "POST",
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, tag })
     });
+    const data = await res.json();
+    document.getElementById("status").innerText = "Saved";
+    renderCapsules(data.capsules);
 }
 
-function analyzeCapsule() {
-  const content = document.getElementById("capsuleInput").value;
-  fetch("/analyze_capsule", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content })
-  })
-  .then(res => res.json())
-  .then(data => {
-    document.getElementById("capsuleStats").innerText =
-      \`Length: \${data.length}, Complexity: \${data.complexity}\`;
-  });
+async function loadCapsules() {
+    const res = await fetch("/load_capsules");
+    const data = await res.json();
+    renderCapsules(data);
 }
 
-function exportCapsules() {
-  window.location.href = "/export_capsules";
+async function analyzeCapsule() {
+    const text = document.getElementById("capsuleInput").value;
+    const res = await fetch("/analyze_capsule", {
+        method: "POST",
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+    });
+    const data = await res.json();
+    alert("Length: " + data.length + ", Complexity: " + data.complexity);
+}
+
+async function exportCapsules() {
+    window.location.href = "/export";
+}
+
+function renderCapsules(capsules) {
+    const container = document.getElementById("capsuleHistory");
+    container.innerHTML = "";
+    capsules.forEach(c => {
+        const div = document.createElement("div");
+        div.textContent = `[${c.timestamp}] (${c.tag}) ${c.text}`;
+        container.appendChild(div);
+    });
 }
