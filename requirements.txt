@@ -1,7 +1,2 @@
 flask
-streamlit
-gradio
-requests
-bs4
-transformers
-huggingface_hub
+gunicorn

@@ -1,8 +1,8 @@
 services:
   - type: web
-    name: gaia-api
+    name: gaia-agent
     env: python
-    plan: free
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "python main.py"
-    autoDeploy: true
+    startCommand: "gunicorn main:app"
+    plan: free
+    region: oregon
