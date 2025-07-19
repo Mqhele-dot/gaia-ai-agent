@@ -1,27 +1,41 @@
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 import os, json
+from datetime import datetime
 
 app = Flask(__name__)
+capsule_history = []
 
 @app.route("/")
 def index():
-    return render_template("dashboard.html")
+    return render_template("index.html")
 
-@app.route("/api/save", methods=["POST"])
+@app.route("/save_capsule", methods=["POST"])
 def save_capsule():
-    data = request.json
-    with open("data/capsules.json", "w") as f:
-        json.dump(data, f)
-    return jsonify({"message": "Saved successfully"}), 200
+    content = request.json.get("capsule", "")
+    tag = request.json.get("tag", "untagged")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    capsule = {"capsule": content, "tag": tag, "timestamp": timestamp}
+    capsule_history.append(capsule)
+    return jsonify(success=True, message="Capsule saved.", capsule=capsule)
 
-@app.route("/api/load", methods=["GET"])
-def load_capsule():
-    if not os.path.exists("data/capsules.json"):
-        return jsonify({"message": "No data found"}), 404
-    with open("data/capsules.json", "r") as f:
-        data = json.load(f)
-    return jsonify(data), 200
+@app.route("/load_capsules", methods=["GET"])
+def load_capsules():
+    return jsonify(capsules=capsule_history)
+
+@app.route("/analyze_capsule", methods=["POST"])
+def analyze_capsule():
+    capsule = request.json.get("capsule", "")
+    length = len(capsule)
+    complexity = "High" if "import" in capsule else "Low"
+    return jsonify(length=length, complexity=complexity)
+
+@app.route("/export_capsules", methods=["GET"])
+def export_capsules():
+    export_path = "capsules.json"
+    with open(export_path, "w") as f:
+        json.dump(capsule_history, f)
+    return send_file(export_path, as_attachment=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
