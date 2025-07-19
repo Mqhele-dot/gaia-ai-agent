@@ -1,0 +1,51 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gaia Dashboard</title>
+    <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+    <div class="dashboard">
+        <h1>🌍 Gaia Autonomous Dashboard</h1>
+
+        <div class="metrics">
+            <div class="card">
+                <h2>Karma Points</h2>
+                <p id="karma">0</p>
+            </div>
+            <div class="card">
+                <h2>Capsules Processed</h2>
+                <p id="capsules">0</p>
+            </div>
+            <div class="card">
+                <h2>API Calls</h2>
+                <p id="api-calls">0</p>
+            </div>
+            <div class="card">
+                <h2>Processing Time</h2>
+                <p id="processing-time">0s</p>
+            </div>
+        </div>
+
+        <div class="controls">
+            <textarea id="capsule-input" placeholder="Enter capsule data or proposal..."></textarea>
+            <div class="buttons">
+                <button id="run-agent">Run Agent</button>
+                <button id="save-capsule">💾 Save</button>
+                <button id="load-capsule">📂 Load</button>
+                <button id="analyze">🔍 Analyze</button>
+                <button id="simulate">🎮 Simulate</button>
+                <button id="export">⬇️ Export</button>
+            </div>
+        </div>
+
+        <div class="status">
+            <h3>Status</h3>
+            <pre id="status">Awaiting input...</pre>
+        </div>
+    </div>
+    <script src="static/script.js"></script>
+</body>
+</html>
