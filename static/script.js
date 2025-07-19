@@ -1,39 +1,44 @@
 
-document.addEventListener("DOMContentLoaded", function () {
-    const status = document.getElementById("status");
-    const input = document.getElementById("capsule-input");
+function saveCapsule() {
+  const content = document.getElementById("capsuleInput").value;
+  const tag = document.getElementById("capsuleTag").value;
+  fetch("/save_capsule", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, tag })
+  })
+  .then(res => res.json())
+  .then(data => {
+    document.getElementById("status").innerText = "Capsule Saved";
+    loadCapsules();
+  });
+}
 
-    document.getElementById("save-capsule").onclick = () => {
-        status.innerText = "Saving...";
-        fetch("/save_capsule", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ capsule: input.value })
-        })
-        .then(res => res.json())
-        .then(data => { status.innerText = data.message; });
-    };
+function loadCapsules() {
+  fetch("/load_capsules")
+    .then(res => res.json())
+    .then(data => {
+      const container = document.getElementById("capsuleHistory");
+      container.innerHTML = "<h3>Capsule History</h3>" + data.map(c =>
+        \`<div>[${c.timestamp}] (${c.tag})</div>\`
+      ).join("");
+    });
+}
 
-    document.getElementById("load-capsule").onclick = () => {
-        status.innerText = "Loading...";
-        fetch("/load_capsule")
-        .then(res => res.json())
-        .then(data => {
-            input.value = data.capsule || "";
-            status.innerText = "Capsule loaded.";
-        });
-    };
+function analyzeCapsule() {
+  const content = document.getElementById("capsuleInput").value;
+  fetch("/analyze_capsule", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content })
+  })
+  .then(res => res.json())
+  .then(data => {
+    document.getElementById("capsuleStats").innerText =
+      \`Length: \${data.length}, Complexity: \${data.complexity}\`;
+  });
+}
 
-    document.getElementById("run-agent").onclick = () => {
-        status.innerText = "Running Gaia agent...";
-        fetch("/run_agent", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ capsule: input.value })
-        })
-        .then(res => res.json())
-        .then(data => {
-            status.innerText = data.result;
-        });
-    };
-});
+function exportCapsules() {
+  window.location.href = "/export_capsules";
+}
