@@ -1,0 +1,33 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gaia Agent Dashboard</title>
+</head>
+<body>
+    <h1>Gaia Agent is Live</h1>
+    <p>Status: <span id="status">Idle</span></p>
+    <textarea id="capsule" rows="4" cols="50" placeholder="Enter upgrade capsule..."></textarea>
+    <br>
+    <button onclick="save()">Save Capsule</button>
+    <button onclick="load()">Load Capsule</button>
+    <pre id="output"></pre>
+<script>
+function save() {
+    fetch("/api/save", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ capsule: document.getElementById("capsule").value })
+    }).then(res => res.json()).then(data => {
+        document.getElementById("status").textContent = data.message;
+    });
+}
+function load() {
+    fetch("/api/load").then(res => res.json()).then(data => {
+        document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+    });
+}
+</script>
+</body>
+</html>
