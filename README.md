@@ -1,2 +1,2 @@
-# gaia-ai-agent
-Self-evolving AI agent for economic and environmental tech
+# Gaia Project
+Autonomous agent that scrapes, learns, and evolves technology.
