@@ -35,6 +35,7 @@ from gaia.gaia_core.storage import (
     save_capsule,
     save_state,
 )
+from gaia.gaia_core.research import explore_science
 from gaia.gaia_core.upgrades import propose_upgrade
 
 load_dotenv()
@@ -57,9 +58,15 @@ def _record_event(
     *,
     capsules_delta: int = 0,
     log_payload: Dict[str, Any] | None = None,
+    summary: str | None = None,
 ) -> None:
     elapsed_ms = (time.time() - start_time) * 1000
-    tracker().record_api_call(action, elapsed_ms, capsules_delta=capsules_delta)
+    tracker().record_api_call(
+        action,
+        elapsed_ms,
+        capsules_delta=capsules_delta,
+        summary=summary,
+    )
     payload: Dict[str, Any] = {"event": action, "processing_ms": round(elapsed_ms, 2)}
     if capsules_delta:
         payload["capsules_delta"] = capsules_delta
@@ -85,7 +92,12 @@ def index() -> str:
 def status() -> Response:
     start = time.time()
     snapshot = tracker().get_status()
-    _record_event("status", start, log_payload={"event": "status", "halted": snapshot["halted"]})
+    _record_event(
+        "status",
+        start,
+        log_payload={"event": "status", "halted": snapshot["halted"]},
+        summary="Status checked",
+    )
     return jsonify(tracker().get_status())
 
 
@@ -104,6 +116,7 @@ def capsules_save() -> Response:
             "capsule_rejected",
             start,
             log_payload={"event": "capsule_rejected", "tag": tag, "reasons": violation["reasons"]},
+            summary="Capsule rejected",
         )
         return jsonify({"error": "Disallowed by policy.", "reasons": violation["reasons"]}), 400
 
@@ -114,7 +127,13 @@ def capsules_save() -> Response:
         "tag": tag,
         "len": len(text),
     }
-    _record_event("capsule_saved", start, capsules_delta=1, log_payload=log_payload)
+    _record_event(
+        "capsule_saved",
+        start,
+        capsules_delta=1,
+        log_payload=log_payload,
+        summary=f"Capsule saved ({tag})",
+    )
     return jsonify(capsule), 201
 
 
@@ -133,6 +152,7 @@ def capsules_list() -> Response:
             "query": query,
             "count": len(capsules),
         },
+        summary="Capsules listed",
     )
     return jsonify({"capsules": capsules})
 
@@ -149,6 +169,7 @@ def capsules_analyze() -> Response:
             "capsule_analysis_blocked",
             start,
             log_payload={"event": "capsule_analysis_blocked", "reasons": analysis_policy["reasons"]},
+            summary="Capsule analysis blocked",
         )
         return jsonify({"error": "Disallowed by policy.", "reasons": analysis_policy["reasons"]}), 400
 
@@ -172,6 +193,7 @@ def capsules_analyze() -> Response:
             "length": length,
             "unique_tokens": unique_tokens,
         },
+        summary="Capsule analyzed",
     )
     return jsonify(result)
 
@@ -192,6 +214,7 @@ def simulate_run() -> Response:
                 "capsule_id": capsule_id or "ad-hoc",
                 "reason": "halted",
             },
+            summary="Simulation blocked",
         )
         return jsonify({"error": "System halted. Simulation disabled."}), 423
 
@@ -207,6 +230,7 @@ def simulate_run() -> Response:
                 "capsule_id": capsule_id or "ad-hoc",
                 "error": message,
             },
+            summary="Simulation blocked",
         )
         if "Disallowed by policy" in message:
             detail = message.split(":", 1)[1].strip() if ":" in message else message
@@ -219,7 +243,12 @@ def simulate_run() -> Response:
         "safety": "pass",
         "risk": "low",
     }
-    _record_event("simulate", start, log_payload=log_payload)
+    _record_event(
+        "simulate",
+        start,
+        log_payload=log_payload,
+        summary="Simulation completed",
+    )
     return jsonify(simulation)
 
 
@@ -238,7 +267,13 @@ def learning_step_route() -> Response:
         "delta_score": snapshot["delta_score"],
         "version": snapshot["version"],
     }
-    _record_event("learning_step", start, log_payload=log_payload)
+    tracker().update_learning(snapshot["version"], float(snapshot["delta_score"]))
+    _record_event(
+        "learning_step",
+        start,
+        log_payload=log_payload,
+        summary=f"Learning step Δ{snapshot['delta_score']:+.3f}",
+    )
     return jsonify(snapshot)
 
 
@@ -251,6 +286,7 @@ def upgrades_propose() -> Response:
             "upgrade_blocked",
             start,
             log_payload={"event": "upgrade_blocked", "reason": "halted"},
+            summary="Upgrade blocked",
         )
         return jsonify({"error": "System halted. Upgrade proposals are paused."}), 423
 
@@ -267,7 +303,12 @@ def upgrades_propose() -> Response:
 
     if not result["accepted"]:
         log_payload["event"] = "upgrade_rejected"
-        _record_event("upgrade_rejected", start, log_payload=log_payload)
+        _record_event(
+            "upgrade_rejected",
+            start,
+            log_payload=log_payload,
+            summary="Upgrade rejected",
+        )
         if result["notes"]:
             return (
                 jsonify(
@@ -281,8 +322,52 @@ def upgrades_propose() -> Response:
             )
         return jsonify(result)
 
-    _record_event("upgrade_accepted", start, log_payload=log_payload)
+    _record_event(
+        "upgrade_accepted",
+        start,
+        log_payload=log_payload,
+        summary="Upgrade accepted",
+    )
     return jsonify(result)
+
+
+@app.route("/research/explore")
+def research_explore() -> Response:
+    start = time.time()
+    if tracker().is_halted():
+        _record_event(
+            "research_explore",
+            start,
+            log_payload={"event": "research_explore", "reason": "halted"},
+            summary="Research blocked",
+        )
+        return jsonify({"error": "System halted. Research exploration paused."}), 423
+
+    query = request.args.get("q", "").strip()
+    if not query:
+        _record_event(
+            "research_explore",
+            start,
+            log_payload={"event": "research_explore", "query": query, "error": "missing_query"},
+            summary="Research query missing",
+        )
+        return jsonify({"error": "Query parameter 'q' is required."}), 400
+
+    research = explore_science(query)
+    log_payload: Dict[str, Any] = {
+        "event": "research_explore",
+        "query": query,
+        "source": research.get("source"),
+        "result_count": len(research.get("results", [])),
+    }
+    _record_event(
+        "research_explore",
+        start,
+        log_payload=log_payload,
+        summary=f"Explored research on '{query}'",
+    )
+    status_code = 200 if research.get("results") else 202
+    return jsonify(research), status_code
 
 
 @app.route("/admin/kill", methods=["POST"])
@@ -290,12 +375,22 @@ def admin_kill() -> Response:
     start = time.time()
     token = request.headers.get("X-ADMIN-TOKEN")
     if token != ADMIN_TOKEN:
-        _record_event("kill_denied", start, log_payload={"event": "kill_denied"})
+        _record_event(
+            "kill_denied",
+            start,
+            log_payload={"event": "kill_denied"},
+            summary="Kill switch denied",
+        )
         return jsonify({"error": "Invalid admin token."}), 403
 
     tracker().set_halted(True)
     save_state({"halted": True})
-    _record_event("kill_switch", start, log_payload={"event": "kill_switch", "status": "HALTED"})
+    _record_event(
+        "kill_switch",
+        start,
+        log_payload={"event": "kill_switch", "status": "HALTED"},
+        summary="Kill switch engaged",
+    )
     return jsonify({"status": "HALTED"})
 
 
@@ -304,7 +399,12 @@ def export_logs() -> Response:
     start = time.time()
     if not ACTIVITY_LOG.exists():
         ACTIVITY_LOG.touch()
-    _record_event("export_logs", start, log_payload={"event": "export_logs"})
+    _record_event(
+        "export_logs",
+        start,
+        log_payload={"event": "export_logs"},
+        summary="Logs exported",
+    )
     return send_file(ACTIVITY_LOG, mimetype="application/json", as_attachment=True, download_name="activity.jsonl")
 
 
@@ -344,10 +444,20 @@ def export_capsules() -> Response:
         mimetype = "text/plain"
         filename = "capsules.txt"
     else:
-        _record_event("export_capsules_failed", start, log_payload={"event": "export_capsules_failed", "fmt": fmt})
+        _record_event(
+            "export_capsules_failed",
+            start,
+            log_payload={"event": "export_capsules_failed", "fmt": fmt},
+            summary="Capsule export failed",
+        )
         return jsonify({"error": "Unsupported format.", "allowed": ["json", "csv", "txt"]}), 400
 
-    _record_event("export_capsules", start, log_payload={"event": "export_capsules", "fmt": fmt, "count": len(capsules)})
+    _record_event(
+        "export_capsules",
+        start,
+        log_payload={"event": "export_capsules", "fmt": fmt, "count": len(capsules)},
+        summary=f"Capsules exported ({fmt})",
+    )
     return Response(data, mimetype=mimetype, headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 

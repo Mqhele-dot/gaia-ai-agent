@@ -22,8 +22,12 @@ interaction, exposes runtime metrics, and provides an emergency kill switch.
   versioned snapshots.
 - **Policy-first safeguards** – All inputs are checked against explicit rules to
   prevent stealth, harm, or unauthorized persistence.
-- **Responsive dashboard** – Tabbed layout with dark mode, live metrics, and
-  searchable capsule history.
+- **Responsive dashboard** – Tabbed layout with dark mode, live metrics,
+  auto-refreshing lists, and searchable capsule history.
+- **Scientific research explorer** – Query open scientific datasets with a
+  curated sustainability fallback so Gaia can surface new ideas responsibly.
+- **Automation toggles** – Enable auto-analyze, auto-simulate, and auto-learning
+  loops directly from the UI while the status bar highlights the latest action.
 
 ## Project Layout
 
@@ -42,6 +46,7 @@ gaia/
     metrics.py
     storage.py
     upgrades.py
+    research.py
   templates/
     dashboard.html
   static/
@@ -155,6 +160,7 @@ testing or for Spaces configured with the "Python" runtime that expects an
 | POST   | `/capsules/analyze` | Length, token, and ethics analysis for text.     |
 | POST   | `/simulate/run`     | Deterministic simulation with impact scores.     |
 | POST   | `/learning/step`    | Mock learning update, records snapshot.          |
+| GET    | `/research/explore` | Explore scientific knowledge about a topic.      |
 | POST   | `/upgrades/propose` | Validate upgrade proposal against policy.        |
 | POST   | `/admin/kill`       | Toggle halt flag (requires `X-ADMIN-TOKEN`).     |
 | GET    | `/export/logs`      | Download `activity.jsonl`.                       |
@@ -180,6 +186,9 @@ curl -s -X POST http://localhost:8000/capsules/analyze \
 curl -s -X POST http://localhost:8000/simulate/run \
   -H "Content-Type: application/json" \
   -d '{"text": "Launch a community solar project"}' | jq
+
+# Research explorer
+curl -s "http://localhost:8000/research/explore?q=green%20hydrogen" | jq
 
 # Learning snapshot
 curl -s -X POST http://localhost:8000/learning/step \

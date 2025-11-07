@@ -14,6 +14,9 @@ def test_metrics_tracker_records_activity():
     assert status["halted"] is True
 
     tracker.set_version("gaia-vtest")
+    tracker.update_learning("gaia-vtest", 0.123)
     status = tracker.get_status()
     assert status["version"] == "gaia-vtest"
-    assert status["last_action"].startswith("version_update")
+    assert status["last_action"] == "Learning step Δ+0.123"
+    assert status["learning_version"] == "gaia-vtest"
+    assert status["learning_delta"] == 0.123

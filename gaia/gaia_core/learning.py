@@ -52,6 +52,7 @@ def learning_step(metrics: Dict[str, float]) -> Dict[str, object]:
         handle.write(json.dumps(snapshot) + "\n")
 
     tracker().set_version(new_version)
+    tracker().update_learning(new_version, delta_score)
 
     return snapshot
 

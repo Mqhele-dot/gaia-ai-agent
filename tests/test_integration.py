@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import json
+from pathlib import Path
 
 
 def test_capsule_flow(client):
@@ -40,7 +42,8 @@ def test_capsule_flow(client):
     status = status_resp.get_json()
     assert status["api_calls"] >= second_status["api_calls"] + 4
     assert status["capsules_processed"] >= 1
-    assert status["last_action"] == "status"
+    assert status["last_action"] == "Status checked"
+    assert status["learning_version"].startswith("gaia-v")
 
     data_root: Path = client.data_root
     activity = data_root / "logs" / "activity.jsonl"
@@ -92,3 +95,41 @@ def test_upgrade_ledger_records(client):
     lines = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
     assert any(entry.get("proposal") == payload["proposal"] for entry in lines)
     assert all("ethics_score" in entry for entry in lines)
+
+
+def test_research_explore_route(client, monkeypatch):
+    calls = {"count": 0}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            calls["count"] += 1
+            return {
+                "message": {
+                    "items": [
+                        {
+                            "title": ["Sustainable test insight"],
+                            "URL": "https://example.com/test",
+                        }
+                    ]
+                }
+            }
+
+    def fake_get(*args, **kwargs):  # noqa: ANN001, ANN002
+        return FakeResponse()
+
+    monkeypatch.setattr("gaia.gaia_core.research.requests.get", fake_get)
+    resp = client.get("/research/explore?q=solar")
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["results"]
+    assert payload["source"] == "crossref"
+    assert calls["count"] == 1
+
+    missing = client.get("/research/explore")
+    assert missing.status_code == 400
+    assert missing.get_json()["error"]

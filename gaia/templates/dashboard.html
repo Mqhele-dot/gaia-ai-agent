@@ -36,6 +36,7 @@
       <button class="tab active" data-target="panel-actions">Agent Actions</button>
       <button class="tab" data-target="panel-capsules">Capsules</button>
       <button class="tab" data-target="panel-simulation">Simulation</button>
+      <button class="tab" data-target="panel-research">Research</button>
       <button class="tab" data-target="panel-learning">Learning</button>
       <button class="tab" data-target="panel-logs">System Logs</button>
       <button class="tab" data-target="panel-exports">Exports</button>
@@ -46,6 +47,20 @@
       <form id="capsule-form">
         <label>Capsule Text<textarea id="capsule-text" rows="6" required></textarea></label>
         <label>Tag<input id="capsule-tag" type="text" placeholder="energy" /></label>
+        <div class="auto-actions">
+          <label class="toggle">
+            <input type="checkbox" id="auto-analyze" />
+            <span>Auto Analyze</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="auto-simulate" />
+            <span>Auto Simulate</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="auto-learning" />
+            <span>Auto Learning</span>
+          </label>
+        </div>
         <div class="button-row">
           <button type="button" id="btn-save" class="primary">Save Capsule</button>
           <button type="button" id="btn-analyze">Analyze</button>
@@ -72,13 +87,31 @@
       <div id="simulation-output" class="output"></div>
     </section>
 
+    <section id="panel-research" class="panel">
+      <h2>Scientific Research Explorer</h2>
+      <p class="panel-description">
+        Gaia queries open scientific datasets to surface high-impact economic and environmental research insights.
+      </p>
+      <form id="research-form" class="research-form">
+        <input id="research-query" type="text" placeholder="e.g. community microgrids" required />
+        <button type="button" id="btn-research" class="primary">Explore Knowledge</button>
+      </form>
+      <div id="research-output" class="output"></div>
+    </section>
+
     <section id="panel-learning" class="panel">
       <h2>Learning Progress</h2>
       <div class="learning-grid">
-        <div><span>Current Version</span><strong id="learning-version">-</strong></div>
-        <div><span>Last Delta</span><strong id="learning-delta">0</strong></div>
+        <div class="learning-card">
+          <span>Current Version</span>
+          <strong id="learning-version">-</strong>
+        </div>
+        <div class="learning-card">
+          <span>Last Delta</span>
+          <strong id="learning-delta">0</strong>
+        </div>
       </div>
-      <canvas id="learning-trend" width="320" height="120"></canvas>
+      <canvas id="learning-trend" width="360" height="140" aria-label="Learning trend sparkline"></canvas>
     </section>
 
     <section id="panel-logs" class="panel">
