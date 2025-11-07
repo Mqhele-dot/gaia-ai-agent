@@ -25,9 +25,21 @@ interaction, exposes runtime metrics, and provides an emergency kill switch.
 - **Responsive dashboard** – Tabbed layout with dark mode, live metrics,
   auto-refreshing lists, and searchable capsule history.
 - **Scientific research explorer** – Query open scientific datasets with a
-  curated sustainability fallback so Gaia can surface new ideas responsibly.
-- **Automation toggles** – Enable auto-analyze, auto-simulate, and auto-learning
-  loops directly from the UI while the status bar highlights the latest action.
+  curated sustainability fallback so Gaia can surface new ideas responsibly or
+  cycle through trusted topics automatically.
+- **Automation toggles** – Enable auto-analyze, auto-simulate, auto-learning,
+  and auto-research loops directly from the UI while the status bar highlights
+  the latest action.
+
+### Automation & exploration loops
+
+Enable the toggles in the Agent Actions and Research tabs to let Gaia perform
+repeat analysis, simulation, learning, and research cycles automatically. When
+auto-research is active, Gaia rotates through a curated list of sustainability
+topics and queries the Crossref API (falling back to built-in knowledge when the
+network is unavailable) so fresh insights continue to surface without constant
+manual input. These automations respect the same policy checks and kill-switch
+state as manual actions.
 
 ## Project Layout
 

@@ -1,7 +1,5 @@
 import json
 from pathlib import Path
-import json
-from pathlib import Path
 
 
 def test_capsule_flow(client):

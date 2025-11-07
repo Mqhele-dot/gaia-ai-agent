@@ -25,14 +25,24 @@ const state = {
     analyze: null,
     simulate: null,
     learning: null,
+    research: null,
   },
   lastLearningDelta: null,
+  researchTopics: [
+    'sustainable energy',
+    'circular economy',
+    'climate resilience',
+    'green infrastructure',
+    'eco-innovation',
+  ],
+  researchIndex: 0,
 };
 
 const autoControls = {
   analyze: $('#auto-analyze'),
   simulate: $('#auto-simulate'),
   learning: $('#auto-learning'),
+  research: $('#auto-research'),
 };
 
 function setOutput(el, data) {
@@ -265,17 +275,29 @@ async function refreshLogs() {
   }
 }
 
-async function exploreResearch({ silent = false } = {}) {
+function nextResearchTopic() {
+  if (state.researchTopics.length === 0) {
+    return '';
+  }
+  const topic = state.researchTopics[state.researchIndex % state.researchTopics.length];
+  state.researchIndex = (state.researchIndex + 1) % state.researchTopics.length;
+  return topic;
+}
+
+async function exploreResearch({ silent = false, topic } = {}) {
   const input = $('#research-query');
-  const topic = input ? input.value.trim() : '';
-  if (!topic) {
+  const query = topic || (input ? input.value.trim() : '');
+  if (topic && input) {
+    input.value = topic;
+  }
+  if (!query) {
     if (!silent) {
       setOutput(statusEls.researchOutput, 'Enter a topic to explore.');
     }
     return;
   }
   try {
-    const data = await fetchJSON(`/research/explore?q=${encodeURIComponent(topic)}`);
+    const data = await fetchJSON(`/research/explore?q=${encodeURIComponent(query)}`);
     setOutput(statusEls.researchOutput, data);
     await refreshStatus();
   } catch (error) {
@@ -283,14 +305,18 @@ async function exploreResearch({ silent = false } = {}) {
   }
 }
 
-function setAutoAction(key, enabled, intervalMs, handler) {
+function setAutoAction(key, enabled, intervalMs, handler, optionsFactory) {
   if (state.autoIntervals[key]) {
     clearInterval(state.autoIntervals[key]);
     state.autoIntervals[key] = null;
   }
   if (enabled) {
-    handler({ silent: true });
-    state.autoIntervals[key] = setInterval(() => handler({ silent: true }), intervalMs);
+    const run = () => {
+      const extra = (typeof optionsFactory === 'function' ? optionsFactory() : {}) || {};
+      handler({ silent: true, ...extra });
+    };
+    run();
+    state.autoIntervals[key] = setInterval(run, intervalMs);
   }
 }
 
@@ -359,6 +385,17 @@ function initEvents() {
   if (autoControls.learning) {
     autoControls.learning.addEventListener('change', () =>
       setAutoAction('learning', autoControls.learning.checked, 45000, runLearningStep),
+    );
+  }
+  if (autoControls.research) {
+    autoControls.research.addEventListener('change', () =>
+      setAutoAction(
+        'research',
+        autoControls.research.checked,
+        60000,
+        exploreResearch,
+        () => ({ topic: nextResearchTopic() }),
+      ),
     );
   }
 }
