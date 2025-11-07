@@ -116,9 +116,24 @@ gunicorn gaia.app:app --bind 0.0.0.0:$PORT
 
 ### Hugging Face Spaces
 
-Deploy either as a static site (serving the built frontend) or a Gradio-like
-Space using the Flask app. Ensure the environment variables above are set and
-point the runner to `python main.py` or `gunicorn gaia.app:app`.
+Gaia ships with a ready-to-use Docker configuration that Hugging Face Spaces
+can execute directly.
+
+1. Create a new **Docker** Space.
+2. Upload the repository contents (including `Dockerfile`, `app.py`, and
+   `requirements.txt`).
+3. Set the desired `ADMIN_TOKEN`, `GAIA_VERSION`, and `GAIA_DATA_DIR` secrets in
+   the Space settings (the defaults from `.env.example` also work).
+
+The Docker build installs dependencies and starts Gunicorn via the command
+
+```
+gunicorn gaia.app:app --bind 0.0.0.0:7860
+```
+
+The provided root-level [`app.py`](app.py) mirrors this behaviour for local
+testing or for Spaces configured with the "Python" runtime that expects an
+`app` object in the module namespace.
 
 ## API Reference
 
