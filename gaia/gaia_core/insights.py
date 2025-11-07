@@ -40,6 +40,10 @@ def generate_insights(limit: int = 3) -> Dict[str, object]:
                 "learning_average": 0.0,
             },
             "autonomous_thought": "I am ready to analyse fresh ideas focused on sustainability and equitable technology.",
+            "autonomous_reflections": [
+                "Collect at least one capsule to trigger strategic reflections.",
+                "Consider focusing on a specific sustainability theme to guide exploration.",
+            ],
         }
 
     focus = _summarise_focus(capsules)
@@ -62,6 +66,8 @@ def generate_insights(limit: int = 3) -> Dict[str, object]:
         }
     )
 
+    reflections: List[str] = []
+
     if learning_history:
         average_delta = mean(learning_history[-10:])
         latest_delta = learning_history[-1]
@@ -81,6 +87,13 @@ def generate_insights(limit: int = 3) -> Dict[str, object]:
                 },
             }
         )
+        reflections.append(
+            (
+                "Learning momentum is {direction}, with the latest delta at {delta:+.3f}."
+            ).format(direction=direction, delta=latest_delta)
+        )
+    else:
+        reflections.append("Learning history is minimal — schedule a step to build momentum.")
 
     complexity_score = min(1.0, average_length / 320)
     insights.append(
@@ -97,12 +110,22 @@ def generate_insights(limit: int = 3) -> Dict[str, object]:
             },
         }
     )
+    if complexity_score >= 0.65:
+        reflections.append("Capsule narratives are rich — maintain depth while highlighting measurable outcomes.")
+    else:
+        reflections.append("Capsule narratives are concise — consider expanding on impact metrics for clarity.")
 
     insights = insights[:limit]
 
     autonomous_thought = (
         "Focusing on {tag} efforts could unlock greater environmental impact; I recommend researching complementary policies next."
     ).format(tag=focus["tag"].replace("-", " "))
+
+    reflections.append(
+        (
+            "Focus area '{tag}' accounts for {share:.0f}% of capsules across {unique} unique tags."
+        ).format(tag=focus["tag"], share=focus["share"] * 100, unique=focus["unique"])
+    )
 
     return {
         "summary": (
@@ -117,6 +140,7 @@ def generate_insights(limit: int = 3) -> Dict[str, object]:
             "latest_version": status.get("learning_version"),
         },
         "autonomous_thought": autonomous_thought,
+        "autonomous_reflections": reflections,
         "recommended_next": [
             "Capture a fresh capsule expanding on the leading focus area.",
             "Run a simulation to validate expected community impact.",

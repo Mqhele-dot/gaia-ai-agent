@@ -27,7 +27,13 @@
     <div class="status-item"><span>API Calls</span><strong id="status-calls">0</strong></div>
     <div class="status-item"><span>Capsules</span><strong id="status-capsules">0</strong></div>
     <div class="status-item"><span>Avg ms</span><strong id="status-avg">0</strong></div>
-    <div class="status-item"><span>Last Action</span><strong id="status-last">-</strong></div>
+    <div class="status-item status-last">
+      <span>Last Action</span>
+      <div class="last-action-pill">
+        <span id="status-last-icon" class="last-action-icon" aria-hidden="true">•</span>
+        <strong id="status-last">-</strong>
+      </div>
+    </div>
   </section>
   <section id="halted-banner" class="halted hidden">HALTED BY ADMIN</section>
 
@@ -61,6 +67,7 @@
             <input type="checkbox" id="auto-learning" />
             <span>Auto Learning</span>
           </label>
+          <span class="auto-note" id="auto-status">Manual mode</span>
         </div>
         <div class="button-row">
           <button type="button" id="btn-save" class="primary">Save Capsule</button>
@@ -125,6 +132,7 @@
       <div id="insights-summary" class="insights-summary">No insights generated yet.</div>
       <div id="insights-output" class="insights-grid"></div>
       <div id="insights-next" class="insights-next"></div>
+      <div id="insights-reflections" class="insights-reflections"></div>
     </section>
 
     <section id="panel-learning" class="panel">
@@ -139,6 +147,21 @@
           <strong id="learning-delta">0</strong>
         </div>
       </div>
+      <div class="learning-stats">
+        <div class="learning-stat">
+          <span>Average Δ (10)</span>
+          <strong id="learning-average">-</strong>
+        </div>
+        <div class="learning-stat">
+          <span>Peak Δ</span>
+          <strong id="learning-best">-</strong>
+        </div>
+        <div class="learning-stat">
+          <span>Lowest Δ</span>
+          <strong id="learning-worst">-</strong>
+        </div>
+      </div>
+      <div id="learning-signal" class="learning-signal">Awaiting learning activity.</div>
       <canvas id="learning-trend" width="360" height="140" aria-label="Learning trend sparkline"></canvas>
     </section>
 

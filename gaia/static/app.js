@@ -8,10 +8,16 @@ const statusEls = {
   capsules: $('#status-capsules'),
   avg: $('#status-avg'),
   last: $('#status-last'),
+  lastIcon: $('#status-last-icon'),
   halted: $('#halted-banner'),
+  autoStatus: $('#auto-status'),
   learningVersion: $('#learning-version'),
   learningDelta: $('#learning-delta'),
   learningTrend: $('#learning-trend'),
+  learningAverage: $('#learning-average'),
+  learningBest: $('#learning-best'),
+  learningWorst: $('#learning-worst'),
+  learningSignal: $('#learning-signal'),
   logOutput: $('#log-output'),
   capsuleList: $('#capsule-list'),
   actionsOutput: $('#actions-output'),
@@ -20,6 +26,7 @@ const statusEls = {
   insightsSummary: $('#insights-summary'),
   insightsOutput: $('#insights-output'),
   insightsNext: $('#insights-next'),
+  insightsReflections: $('#insights-reflections'),
 };
 
 const state = {
@@ -50,6 +57,123 @@ const autoControls = {
   research: $('#auto-research'),
   insights: $('#auto-insights'),
 };
+
+const ACTION_INDICATORS = {
+  status: '📡',
+  capsule_saved: '🗂️',
+  capsule_rejected: '⚠️',
+  capsules_list: '📋',
+  capsule_analyze: '🧮',
+  capsule_analysis_blocked: '🚫',
+  simulate: '🧪',
+  simulate_blocked: '⛔',
+  learning_step: '📈',
+  learning_history: '🗃️',
+  upgrade_accepted: '✅',
+  upgrade_rejected: '❎',
+  upgrade_blocked: '⛔',
+  kill_switch: '🛑',
+  kill_denied: '🔒',
+  export_capsules: '⬇️',
+  export_logs: '📥',
+  research_explore: '🔭',
+  insight_reflect: '💡',
+  version_set: '🧬',
+  system_halted: '🛑',
+  system_resumed: '▶️',
+};
+
+const AUTO_LABELS = {
+  analyze: 'Analyze',
+  simulate: 'Simulate',
+  learning: 'Learn',
+  research: 'Research',
+  insights: 'Insights',
+};
+
+function formatDuration(seconds) {
+  const total = Number(seconds) || 0;
+  if (total < 60) {
+    return `${Math.max(0, Math.round(total))}s`;
+  }
+  const minutes = Math.floor(total / 60);
+  const remainingSeconds = Math.round(total % 60);
+  if (minutes < 60) {
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
+}
+
+function formatLastAction(label, fallback) {
+  const source = label || fallback;
+  if (!source) return 'Awaiting activity';
+  const trimmed = String(source).trim();
+  if (!trimmed) return 'Awaiting activity';
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+function applyLastActionVisual(event) {
+  if (!statusEls.lastIcon) return;
+  const icon = ACTION_INDICATORS[event] || '•';
+  statusEls.lastIcon.textContent = icon;
+}
+
+function updateAutoStatus() {
+  if (!statusEls.autoStatus) return;
+  const active = Object.entries(autoControls)
+    .filter(([, control]) => control && control.checked)
+    .map(([key]) => AUTO_LABELS[key] || key);
+  if (!active.length) {
+    statusEls.autoStatus.textContent = 'Manual mode';
+    statusEls.autoStatus.classList.remove('active');
+    return;
+  }
+  statusEls.autoStatus.textContent = `Auto: ${active.join(', ')}`;
+  statusEls.autoStatus.classList.add('active');
+}
+
+function numericTrend() {
+  return state.learningTrend.filter((value) => typeof value === 'number' && !Number.isNaN(value));
+}
+
+function renderLearningStats(values = numericTrend()) {
+  if (!statusEls.learningAverage || !statusEls.learningBest || !statusEls.learningWorst) {
+    return;
+  }
+  if (!values.length) {
+    statusEls.learningAverage.textContent = '-';
+    statusEls.learningBest.textContent = '-';
+    statusEls.learningWorst.textContent = '-';
+    if (statusEls.learningSignal) {
+      statusEls.learningSignal.textContent = 'Awaiting learning activity.';
+      statusEls.learningSignal.classList.remove('signal-positive', 'signal-negative', 'signal-neutral');
+    }
+    return;
+  }
+  const recent = values.slice(-10);
+  const average = recent.reduce((sum, value) => sum + value, 0) / recent.length;
+  const best = Math.max(...values);
+  const worst = Math.min(...values);
+  const latest = values[values.length - 1];
+  statusEls.learningAverage.textContent = average.toFixed(3);
+  statusEls.learningBest.textContent = best.toFixed(3);
+  statusEls.learningWorst.textContent = worst.toFixed(3);
+  if (statusEls.learningSignal) {
+    statusEls.learningSignal.classList.remove('signal-positive', 'signal-negative', 'signal-neutral');
+    if (latest > 0.001) {
+      statusEls.learningSignal.textContent = `Momentum rising (+${latest.toFixed(3)})`;
+      statusEls.learningSignal.classList.add('signal-positive');
+    } else if (latest < -0.001) {
+      statusEls.learningSignal.textContent = `Momentum softening (${latest.toFixed(3)})`;
+      statusEls.learningSignal.classList.add('signal-negative');
+    } else {
+      statusEls.learningSignal.textContent = `Momentum steady (${latest.toFixed(3)})`;
+      statusEls.learningSignal.classList.add('signal-neutral');
+    }
+  }
+}
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -146,11 +270,13 @@ function renderInsights(data) {
   const summaryEl = statusEls.insightsSummary;
   const grid = statusEls.insightsOutput;
   const nextEl = statusEls.insightsNext;
+  const reflectionsEl = statusEls.insightsReflections;
   if (!grid) return;
   if (!data || data.error) {
     if (summaryEl) summaryEl.textContent = 'Unable to generate insights right now.';
     renderJSON(grid, data || { error: 'Insight generation failed.' });
     if (nextEl) nextEl.textContent = '';
+    if (reflectionsEl) reflectionsEl.innerHTML = '<p class="muted">No reflections available.</p>';
     return;
   }
   if (summaryEl) {
@@ -190,6 +316,17 @@ function renderInsights(data) {
       nextEl.textContent = '';
     }
   }
+  if (reflectionsEl) {
+    const reflections = Array.isArray(data.autonomous_reflections) ? data.autonomous_reflections : [];
+    if (reflections.length) {
+      reflectionsEl.innerHTML = `
+        <h3>Independent reflections</h3>
+        <ul>${reflections.map((entry) => `<li>${escapeHtml(entry)}</li>`).join('')}</ul>
+      `;
+    } else {
+      reflectionsEl.innerHTML = '<p class="muted">No reflections recorded.</p>';
+    }
+  }
 }
 
 function updateLearningMetrics(version, delta, { track = false } = {}) {
@@ -210,6 +347,7 @@ function updateLearningMetrics(version, delta, { track = false } = {}) {
       drawTrend();
     }
   }
+  renderLearningStats();
 }
 
 function setCurrentCapsule(capsule, { updateForm = false } = {}) {
@@ -263,19 +401,25 @@ async function fetchJSON(url, options = {}) {
 async function refreshStatus() {
   try {
     const data = await fetchJSON('/status', { method: 'GET' });
-    statusEls.uptime.textContent = `${data.uptime_s}s`;
+    statusEls.uptime.textContent = formatDuration(data.uptime_s);
     statusEls.version.textContent = data.version || '-';
     statusEls.calls.textContent = data.api_calls ?? 0;
     statusEls.capsules.textContent = data.capsules_processed ?? 0;
     statusEls.avg.textContent = data.processing_ms_avg ?? 0;
-    statusEls.last.textContent = data.last_action || 'Awaiting activity';
+    const actionLabel = formatLastAction(data.last_action_label, data.last_action);
+    statusEls.last.textContent = actionLabel;
+    if (data.last_action) {
+      statusEls.last.title = data.last_action;
+    }
+    applyLastActionVisual(data.last_action_event);
     statusEls.halted.classList.toggle('hidden', !data.halted);
     const delta = typeof data.learning_delta === 'number' ? data.learning_delta : null;
     const shouldTrack =
       delta !== null && (state.learningTrend.length === 0 || state.learningTrend[state.learningTrend.length - 1] !== delta);
     updateLearningMetrics(data.learning_version, delta, { track: shouldTrack });
     if (Array.isArray(data.learning_history) && data.learning_history.length) {
-      state.learningTrend = data.learning_history.map((value) => Number(value));
+      state.learningTrend = data.learning_history.map((value) => Number(value)).filter((value) => !Number.isNaN(value));
+      renderLearningStats();
       drawTrend();
     }
   } catch (error) {
@@ -287,9 +431,12 @@ async function fetchLearningHistory() {
   try {
     const data = await fetchJSON('/learning/history');
     if (Array.isArray(data.history) && data.history.length) {
-      state.learningTrend = data.history.map((entry) => Number(entry.delta_score ?? 0));
+      state.learningTrend = data.history
+        .map((entry) => Number(entry.delta_score ?? 0))
+        .filter((value) => !Number.isNaN(value));
       const latest = data.history[data.history.length - 1];
       updateLearningMetrics(latest.version, Number(latest.delta_score ?? 0), { track: false });
+      renderLearningStats();
       drawTrend();
     }
   } catch (error) {
@@ -330,6 +477,7 @@ async function saveCapsule() {
     if (autoControls.insights?.checked) {
       await fetchInsights({ silent: true });
     }
+    updateAutoStatus();
   } catch (error) {
     renderJSON(statusEls.actionsOutput, error);
   }
@@ -433,7 +581,8 @@ function drawTrend() {
   ctx.fillStyle = 'rgba(47, 128, 237, 0.06)';
   ctx.fillRect(0, 0, drawWidth, drawHeight);
 
-  const values = state.learningTrend;
+  const values = numericTrend();
+  renderLearningStats(values);
   if (!values || values.length < 2) {
     ctx.fillStyle = '#94a3b8';
     ctx.font = '14px "Inter", sans-serif';
@@ -458,6 +607,17 @@ function drawTrend() {
     ctx.moveTo(padding, y);
     ctx.lineTo(padding + chartWidth, y);
     ctx.stroke();
+  }
+
+  if (min < 0 && max > 0) {
+    const zeroY = toY(0);
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padding, zeroY);
+    ctx.lineTo(padding + chartWidth, zeroY);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   ctx.beginPath();
@@ -488,7 +648,11 @@ function drawTrend() {
   ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
   ctx.fill();
   ctx.font = '12px "Inter", sans-serif';
-  ctx.fillText(`${lastValue.toFixed(3)} Δ`, lastX - 20, Math.max(padding + 12, lastY - 10));
+  ctx.fillText(`${lastValue.toFixed(3)} Δ`, lastX - 24, Math.max(padding + 12, lastY - 10));
+  ctx.fillStyle = '#475569';
+  ctx.font = '12px "Inter", sans-serif';
+  ctx.fillText('Δ score', padding, padding - 4);
+  ctx.fillText('Steps →', padding + chartWidth - 56, padding - 4);
   ctx.restore();
 }
 
@@ -531,7 +695,8 @@ async function refreshLogs() {
   try {
     const response = await fetch('/export/logs');
     const text = await response.text();
-    statusEls.logOutput.textContent = text.trim();
+    const trimmed = text.trim();
+    statusEls.logOutput.textContent = trimmed || 'No activity logged yet. Engage actions to generate events.';
   } catch (error) {
     console.error('Log fetch failed', error);
   }
@@ -592,11 +757,14 @@ function setAutoAction(key, enabled, intervalMs, handler, optionsFactory) {
   if (enabled) {
     const run = () => {
       const extra = (typeof optionsFactory === 'function' ? optionsFactory() : {}) || {};
-      handler({ silent: true, ...extra });
+      Promise.resolve(handler({ silent: true, ...extra })).catch((error) => {
+        console.warn(`Auto action '${key}' failed`, error);
+      });
     };
     run();
     state.autoIntervals[key] = setInterval(run, intervalMs);
   }
+  updateAutoStatus();
 }
 
 function restoreAutoToggle(control, key, intervalMs, handler, optionsFactory) {
@@ -611,6 +779,7 @@ function restoreAutoToggle(control, key, intervalMs, handler, optionsFactory) {
   } catch (err) {
     /* ignore */
   }
+  updateAutoStatus();
 }
 
 function initTabs() {
@@ -677,11 +846,13 @@ async function boot() {
   initTabs();
   initDarkMode();
   initEvents();
+  updateAutoStatus();
   await refreshStatus();
   await fetchLearningHistory();
   await refreshCapsules();
   await refreshLogs();
   await fetchInsights({ silent: true });
+  renderLearningStats();
   drawTrend();
   setInterval(refreshStatus, 7000);
   setInterval(refreshLogs, 10000);

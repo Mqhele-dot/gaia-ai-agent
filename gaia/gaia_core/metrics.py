@@ -27,6 +27,9 @@ ACTION_LABELS = {
     "research_explore": "Scientific research explored",
     "learning_history": "Learning history viewed",
     "insight_reflect": "Strategic insight generated",
+    "version_set": "Version updated",
+    "system_halted": "System halted",
+    "system_resumed": "System resumed",
 }
 
 
@@ -51,11 +54,38 @@ class MetricsTracker:
             "processing_ms_total": 0.0,
         }
         self._last_action: Optional[str] = None
+        self._last_action_label: Optional[str] = None
+        self._last_action_event: Optional[str] = None
         self._version = "gaia-v1.0"
         self._halted = False
         self._learning_version: Optional[str] = None
         self._learning_delta: Optional[float] = None
         self._learning_history: List[float] = []
+
+    @staticmethod
+    def _derive_label(action: str, summary: Optional[str], humanized: str) -> str:
+        base = summary or ACTION_LABELS.get(action) or action.replace("_", " ").title()
+        cleaned = base.split("Δ", 1)[0]
+        cleaned = cleaned.split("(", 1)[0]
+        cleaned = cleaned.split(":", 1)[0]
+        cleaned = cleaned.strip()
+        if cleaned:
+            return cleaned
+        fallback = humanized.split("(", 1)[0].strip()
+        return fallback or humanized
+
+    def _update_last_action(
+        self,
+        action: str,
+        summary: Optional[str],
+        *,
+        humanized: Optional[str] = None,
+        event: Optional[str] = None,
+    ) -> None:
+        detail = humanized or _humanize(action, summary)
+        self._last_action = detail
+        self._last_action_label = self._derive_label(action, summary, detail)
+        self._last_action_event = event or action
 
     def record_api_call(
         self,
@@ -70,17 +100,21 @@ class MetricsTracker:
             self._data["processing_ms_total"] += float(processing_ms)
             if capsules_delta:
                 self._data["capsules_processed"] += capsules_delta
-            self._last_action = _humanize(action, summary)
+            humanized = _humanize(action, summary)
+            self._update_last_action(action, summary, humanized=humanized)
 
     def set_version(self, version: str) -> None:
         with self._lock:
             self._version = version
-            self._last_action = f"Version set to {version}"
+            summary = f"Version set to {version}"
+            self._update_last_action("version_set", summary, humanized=summary, event="version_set")
 
     def set_halted(self, halted: bool) -> None:
         with self._lock:
             self._halted = halted
-            self._last_action = "System halted" if halted else "System resumed"
+            summary = "System halted" if halted else "System resumed"
+            event = "system_halted" if halted else "system_resumed"
+            self._update_last_action(event, summary, humanized=summary, event=event)
 
     def update_learning(self, version: str, delta: float) -> None:
         with self._lock:
@@ -89,7 +123,8 @@ class MetricsTracker:
             self._learning_history.append(delta)
             if len(self._learning_history) > 50:
                 self._learning_history = self._learning_history[-50:]
-            self._last_action = _humanize("learning_step", f"Learning step Δ{delta:+.3f}")
+            summary = f"Learning step Δ{delta:+.3f}"
+            self._update_last_action("learning_step", summary, humanized=summary, event="learning_step")
 
     def seed_learning_history(
         self,
@@ -117,6 +152,8 @@ class MetricsTracker:
                 "uptime_s": round(uptime_s, 2),
                 "version": self._version,
                 "last_action": self._last_action,
+                "last_action_label": self._last_action_label,
+                "last_action_event": self._last_action_event,
                 "capsules_processed": int(self._data["capsules_processed"]),
                 "api_calls": api_calls,
                 "processing_ms_avg": round(avg_ms, 2),
