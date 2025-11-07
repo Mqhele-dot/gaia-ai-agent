@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gaia Control Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body class="light-mode">
+  <header class="top-bar">
+    <div class="branding">
+      <h1>Gaia</h1>
+      <p class="subtitle">Ethical, transparent, self-improving assistant</p>
+    </div>
+    <div class="controls">
+      <label class="toggle">
+        <input type="checkbox" id="dark-mode-toggle" />
+        <span>Dark mode</span>
+      </label>
+      <button id="refresh-status" class="secondary">Refresh Status</button>
+    </div>
+  </header>
+
+  <section id="status-bar" class="status-bar">
+    <div class="status-item"><span>Uptime</span><strong id="status-uptime">0s</strong></div>
+    <div class="status-item"><span>Version</span><strong id="status-version">-</strong></div>
+    <div class="status-item"><span>API Calls</span><strong id="status-calls">0</strong></div>
+    <div class="status-item"><span>Capsules</span><strong id="status-capsules">0</strong></div>
+    <div class="status-item"><span>Avg ms</span><strong id="status-avg">0</strong></div>
+    <div class="status-item"><span>Last Action</span><strong id="status-last">-</strong></div>
+  </section>
+  <section id="halted-banner" class="halted hidden">HALTED BY ADMIN</section>
+
+  <main class="layout">
+    <nav class="tabs">
+      <button class="tab active" data-target="panel-actions">Agent Actions</button>
+      <button class="tab" data-target="panel-capsules">Capsules</button>
+      <button class="tab" data-target="panel-simulation">Simulation</button>
+      <button class="tab" data-target="panel-learning">Learning</button>
+      <button class="tab" data-target="panel-logs">System Logs</button>
+      <button class="tab" data-target="panel-exports">Exports</button>
+    </nav>
+
+    <section id="panel-actions" class="panel active">
+      <h2>Agent Actions</h2>
+      <form id="capsule-form">
+        <label>Capsule Text<textarea id="capsule-text" rows="6" required></textarea></label>
+        <label>Tag<input id="capsule-tag" type="text" placeholder="energy" /></label>
+        <div class="button-row">
+          <button type="button" id="btn-save" class="primary">Save Capsule</button>
+          <button type="button" id="btn-analyze">Analyze</button>
+          <button type="button" id="btn-simulate">Simulate</button>
+          <button type="button" id="btn-upgrade">Propose Upgrade</button>
+          <button type="button" id="btn-learning">Run Learning Step</button>
+        </div>
+      </form>
+      <div id="actions-output" class="output"></div>
+    </section>
+
+    <section id="panel-capsules" class="panel">
+      <h2>Capsule Library</h2>
+      <div class="filter-row">
+        <input id="filter-tag" type="text" placeholder="Filter by tag" />
+        <input id="filter-query" type="text" placeholder="Search text" />
+        <button id="btn-filter" class="secondary">Apply</button>
+      </div>
+      <ul id="capsule-list" class="capsule-list"></ul>
+    </section>
+
+    <section id="panel-simulation" class="panel">
+      <h2>Simulation Results</h2>
+      <div id="simulation-output" class="output"></div>
+    </section>
+
+    <section id="panel-learning" class="panel">
+      <h2>Learning Progress</h2>
+      <div class="learning-grid">
+        <div><span>Current Version</span><strong id="learning-version">-</strong></div>
+        <div><span>Last Delta</span><strong id="learning-delta">0</strong></div>
+      </div>
+      <canvas id="learning-trend" width="320" height="120"></canvas>
+    </section>
+
+    <section id="panel-logs" class="panel">
+      <h2>System Logs</h2>
+      <pre id="log-output" class="log-output"></pre>
+      <button id="btn-download-logs" class="secondary">Download Logs</button>
+    </section>
+
+    <section id="panel-exports" class="panel">
+      <h2>Exports</h2>
+      <div class="export-row">
+        <button data-fmt="json" class="export-btn">Export JSON</button>
+        <button data-fmt="csv" class="export-btn">Export CSV</button>
+        <button data-fmt="txt" class="export-btn">Export TXT</button>
+      </div>
+      <button id="btn-refresh-capsules" class="secondary">Refresh Capsule List</button>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Gaia prioritizes transparency, consent, and environmental stewardship. Emergency kill switch available to administrators.</p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+"""Runtime metrics and health tracking for Gaia."""
+from __future__ import annotations
+
+import threading
+import time
+from typing import Dict, Optional
+
+
+class MetricsTracker:
+    """Thread-safe metrics collector used across the application."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._start_ts = time.time()
+        self._data: Dict[str, float] = {
+            "api_calls": 0,
+            "capsules_processed": 0,
+            "processing_ms_total": 0.0,
+        }
+        self._last_action: Optional[str] = None
+        self._version = "gaia-v1.0"
+        self._halted = False
+
+    def record_api_call(self, action: str, processing_ms: float, capsules_delta: int = 0) -> None:
+        with self._lock:
+            self._data["api_calls"] += 1
+            self._data["processing_ms_total"] += float(processing_ms)
+            if capsules_delta:
+                self._data["capsules_processed"] += capsules_delta
+            self._last_action = action
+
+    def set_version(self, version: str) -> None:
+        with self._lock:
+            self._version = version
+            self._last_action = f"version_update:{version}"
+
+    def set_halted(self, halted: bool) -> None:
+        with self._lock:
+            self._halted = halted
+            self._last_action = "halted" if halted else "resumed"
+
+    def is_halted(self) -> bool:
+        with self._lock:
+            return self._halted
+
+    def get_status(self) -> Dict[str, object]:
+        with self._lock:
+            uptime_s = time.time() - self._start_ts
+            api_calls = int(self._data["api_calls"])
+            avg_ms = self._data["processing_ms_total"] / api_calls if api_calls else 0.0
+            return {
+                "uptime_s": round(uptime_s, 2),
+                "version": self._version,
+                "last_action": self._last_action,
+                "capsules_processed": int(self._data["capsules_processed"]),
+                "api_calls": api_calls,
+                "processing_ms_avg": round(avg_ms, 2),
+                "halted": self._halted,
+            }
+
+
+_metrics = MetricsTracker()
+
+
+def tracker() -> MetricsTracker:
+    return _metrics
+
+
+__all__ = ["tracker", "MetricsTracker"]

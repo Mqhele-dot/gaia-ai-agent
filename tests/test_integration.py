@@ -1,0 +1,94 @@
+import json
+from pathlib import Path
+
+
+def test_capsule_flow(client):
+    first_status = client.get("/status").get_json()
+    second_status = client.get("/status").get_json()
+    assert second_status["api_calls"] == first_status["api_calls"] + 1
+
+    payload = {"text": "Launch a community solar project", "tag": "solar"}
+    save_resp = client.post("/capsules/save", json=payload)
+    assert save_resp.status_code == 201
+    capsule_id = save_resp.get_json()["id"]
+
+    list_resp = client.get("/capsules/list")
+    assert list_resp.status_code == 200
+    capsules = list_resp.get_json()["capsules"]
+    assert any(cap["id"] == capsule_id for cap in capsules)
+
+    analyze_resp = client.post("/capsules/analyze", json={"text": payload["text"]})
+    assert analyze_resp.status_code == 200
+    analysis = analyze_resp.get_json()
+    assert analysis["length"] > 0
+    assert 0 <= analysis["ethics_score"] <= 1
+
+    simulate_resp = client.post("/simulate/run", json={"text": payload["text"]})
+    assert simulate_resp.status_code == 200
+    simulation = simulate_resp.get_json()
+    assert "plan" in simulation and simulation["plan"]
+
+    export_resp = client.get("/export/capsules?fmt=json")
+    assert export_resp.status_code == 200
+    exported = json.loads(export_resp.data.decode("utf-8"))
+    assert isinstance(exported, list) and any(item["id"] == capsule_id for item in exported)
+
+    logs_resp = client.get("/export/logs")
+    assert logs_resp.status_code == 200
+
+    status_resp = client.get("/status")
+    status = status_resp.get_json()
+    assert status["api_calls"] >= second_status["api_calls"] + 4
+    assert status["capsules_processed"] >= 1
+    assert status["last_action"] == "status"
+
+    data_root: Path = client.data_root
+    activity = data_root / "logs" / "activity.jsonl"
+    assert activity.exists()
+    events = [json.loads(line)["event"] for line in activity.read_text().splitlines() if line.strip()]
+    for event in ["status", "capsule_saved", "capsules_list", "capsule_analyze", "simulate", "export_capsules"]:
+        assert event in events
+
+
+def test_kill_switch_persists_and_blocks(client):
+    denied = client.post("/admin/kill")
+    assert denied.status_code == 403
+    assert denied.get_json()["error"] == "Invalid admin token."
+
+    kill_resp = client.post("/admin/kill", headers={"X-ADMIN-TOKEN": "test-token"})
+    assert kill_resp.status_code == 200
+    assert kill_resp.get_json()["status"] == "HALTED"
+
+    status_resp = client.get("/status")
+    status = status_resp.get_json()
+    assert status["halted"] is True
+
+    simulate_blocked = client.post("/simulate/run", json={"text": "Assess community gardens"})
+    assert simulate_blocked.status_code == 423
+    upgrade_blocked = client.post("/upgrades/propose", json={"proposal": "Test upgrade", "rationale": "safe"})
+    assert upgrade_blocked.status_code == 423
+
+    new_client = client.reload()
+    restarted_status = new_client.get("/status").get_json()
+    assert restarted_status["halted"] is True
+
+    data_root: Path = client.data_root
+    activity = data_root / "logs" / "activity.jsonl"
+    kill_events = [json.loads(line) for line in activity.read_text().splitlines() if "kill_switch" in line]
+    assert any(entry.get("event") == "kill_switch" for entry in kill_events)
+
+
+def test_upgrade_ledger_records(client):
+    payload = {"proposal": "Deploy transparent solar panels", "rationale": "Boost clean energy"}
+    response = client.post("/upgrades/propose", json=payload)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["accepted"] is True
+    assert data["decision"] == "accepted"
+
+    data_root: Path = client.data_root
+    ledger = data_root / "upgrades_ledger.jsonl"
+    assert ledger.exists()
+    lines = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+    assert any(entry.get("proposal") == payload["proposal"] for entry in lines)
+    assert all("ethics_score" in entry for entry in lines)

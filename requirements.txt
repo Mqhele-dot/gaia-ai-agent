@@ -1,3 +1,4 @@
-flask
-openai
-requests
+flask>=2.3
+gunicorn>=21.2
+python-dotenv>=1.0
+pytest>=7.4
