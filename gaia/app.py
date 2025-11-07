@@ -23,7 +23,8 @@ from flask import (
     send_file,
 )
 
-from gaia.gaia_core.learning import learning_step
+from gaia.gaia_core.insights import generate_insights
+from gaia.gaia_core.learning import learning_step, load_learning_history
 from gaia.gaia_core.metrics import tracker
 from gaia.gaia_core.policy import check_capsule
 from gaia.gaia_core.simulate import simulate
@@ -50,6 +51,16 @@ tracker().set_version(HEALTH_VERSION)
 _runtime_state = load_state()
 if _runtime_state.get("halted"):
     tracker().set_halted(True)
+
+_learning_history = load_learning_history()
+if _learning_history:
+    last = _learning_history[-1]
+    tracker().set_version(last.get("version", HEALTH_VERSION))
+    tracker().seed_learning_history(
+        last.get("version"),
+        float(last.get("delta_score", 0.0)),
+        (entry.get("delta_score", 0.0) for entry in _learning_history),
+    )
 
 
 def _record_event(
@@ -277,6 +288,19 @@ def learning_step_route() -> Response:
     return jsonify(snapshot)
 
 
+@app.route("/learning/history")
+def learning_history() -> Response:
+    start = time.time()
+    history = load_learning_history()
+    _record_event(
+        "learning_history",
+        start,
+        log_payload={"event": "learning_history", "count": len(history)},
+        summary="Learning history viewed",
+    )
+    return jsonify({"history": history})
+
+
 @app.route("/upgrades/propose", methods=["POST"])
 def upgrades_propose() -> Response:
     start = time.time()
@@ -329,6 +353,23 @@ def upgrades_propose() -> Response:
         summary="Upgrade accepted",
     )
     return jsonify(result)
+
+
+@app.route("/insights/reflect")
+def insights_reflect() -> Response:
+    start = time.time()
+    insights = generate_insights()
+    _record_event(
+        "insight_reflect",
+        start,
+        log_payload={
+            "event": "insight_reflect",
+            "insights": len(insights.get("insights", [])),
+            "capsules": insights.get("metadata", {}).get("capsules"),
+        },
+        summary="Strategic insight generated",
+    )
+    return jsonify(insights)
 
 
 @app.route("/research/explore")

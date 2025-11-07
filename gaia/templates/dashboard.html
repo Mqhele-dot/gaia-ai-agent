@@ -37,6 +37,7 @@
       <button class="tab" data-target="panel-capsules">Capsules</button>
       <button class="tab" data-target="panel-simulation">Simulation</button>
       <button class="tab" data-target="panel-research">Research</button>
+      <button class="tab" data-target="panel-insights">Insights</button>
       <button class="tab" data-target="panel-learning">Learning</button>
       <button class="tab" data-target="panel-logs">System Logs</button>
       <button class="tab" data-target="panel-exports">Exports</button>
@@ -84,7 +85,10 @@
 
     <section id="panel-simulation" class="panel">
       <h2>Simulation Results</h2>
-      <div id="simulation-output" class="output"></div>
+      <p class="panel-description">
+        Review Gaia's projected plan, risk profile, and expected impact from the latest simulation.
+      </p>
+      <div id="simulation-output" class="output placeholder">Awaiting simulation.</div>
     </section>
 
     <section id="panel-research" class="panel">
@@ -104,6 +108,23 @@
         <small class="auto-hint">Gaia cycles through trusted sustainability topics every minute.</small>
       </div>
       <div id="research-output" class="output"></div>
+    </section>
+
+    <section id="panel-insights" class="panel">
+      <h2>Autonomous Insights</h2>
+      <p class="panel-description">
+        Gaia periodically reflects on stored capsules and learning progress to suggest the next best actions.
+      </p>
+      <div class="auto-insights">
+        <label class="toggle">
+          <input type="checkbox" id="auto-insights" />
+          <span>Auto Reflect</span>
+        </label>
+        <small class="auto-hint">Gaia will surface fresh insights every few minutes when enabled.</small>
+      </div>
+      <div id="insights-summary" class="insights-summary">No insights generated yet.</div>
+      <div id="insights-output" class="insights-grid"></div>
+      <div id="insights-next" class="insights-next"></div>
     </section>
 
     <section id="panel-learning" class="panel">

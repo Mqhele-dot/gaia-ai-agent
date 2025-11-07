@@ -1,4 +1,5 @@
 import importlib
+import importlib
 import sys
 from pathlib import Path
 
@@ -23,6 +24,8 @@ def client(tmp_path, monkeypatch):
         "gaia.gaia_core.simulate",
         "gaia.gaia_core.upgrades",
         "gaia.gaia_core.policy",
+        "gaia.gaia_core.insights",
+        "gaia.gaia_core.research",
         "gaia.app",
     ]
 

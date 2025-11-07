@@ -30,6 +30,9 @@ interaction, exposes runtime metrics, and provides an emergency kill switch.
 - **Automation toggles** – Enable auto-analyze, auto-simulate, auto-learning,
   and auto-research loops directly from the UI while the status bar highlights
   the latest action.
+- **Autonomous insights** – Gaia reflects on stored capsules and learning
+  momentum to suggest next best actions with confidence indicators and visual
+  trends.
 
 ### Automation & exploration loops
 
@@ -39,7 +42,8 @@ auto-research is active, Gaia rotates through a curated list of sustainability
 topics and queries the Crossref API (falling back to built-in knowledge when the
 network is unavailable) so fresh insights continue to surface without constant
 manual input. These automations respect the same policy checks and kill-switch
-state as manual actions.
+state as manual actions. The Insights tab can also run on an automatic cadence
+to surface Gaia's latest reflections and recommended follow-up tasks.
 
 ## Project Layout
 
@@ -59,6 +63,7 @@ gaia/
     storage.py
     upgrades.py
     research.py
+    insights.py
   templates/
     dashboard.html
   static/
@@ -172,7 +177,9 @@ testing or for Spaces configured with the "Python" runtime that expects an
 | POST   | `/capsules/analyze` | Length, token, and ethics analysis for text.     |
 | POST   | `/simulate/run`     | Deterministic simulation with impact scores.     |
 | POST   | `/learning/step`    | Mock learning update, records snapshot.          |
+| GET    | `/learning/history` | Retrieve recent learning deltas for charts.      |
 | GET    | `/research/explore` | Explore scientific knowledge about a topic.      |
+| GET    | `/insights/reflect` | Generate heuristic insights and next actions.    |
 | POST   | `/upgrades/propose` | Validate upgrade proposal against policy.        |
 | POST   | `/admin/kill`       | Toggle halt flag (requires `X-ADMIN-TOKEN`).     |
 | GET    | `/export/logs`      | Download `activity.jsonl`.                       |
@@ -207,10 +214,16 @@ curl -s -X POST http://localhost:8000/learning/step \
   -H "Content-Type: application/json" \
   -d '{"engagement": 7.5, "success_rate": 0.9, "feedback_score": 0.8}' | jq
 
+# Learning history for visualisations
+curl -s http://localhost:8000/learning/history | jq
+
 # Upgrade proposal
 curl -s -X POST http://localhost:8000/upgrades/propose \
   -H "Content-Type: application/json" \
   -d '{"proposal": "Deploy transparent solar panels", "rationale": "Boost clean energy"}' | jq
+
+# Autonomous insights
+curl -s http://localhost:8000/insights/reflect | jq
 
 # Export logs and capsules
 curl -s -OJ http://localhost:8000/export/logs

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from .metrics import tracker
 from .storage import MODELS_DIR
@@ -46,6 +47,7 @@ def learning_step(metrics: Dict[str, float]) -> Dict[str, object]:
         "version": new_version,
         "delta_score": delta_score,
         "metrics": metrics,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     with VERSIONS_FILE.open("a", encoding="utf-8") as handle:
@@ -57,4 +59,31 @@ def learning_step(metrics: Dict[str, float]) -> Dict[str, object]:
     return snapshot
 
 
-__all__ = ["learning_step", "VERSIONS_FILE"]
+def load_learning_history(limit: int = 50) -> List[Dict[str, object]]:
+    """Return the most recent learning snapshots for dashboard visualisations."""
+
+    if not VERSIONS_FILE.exists():
+        return []
+
+    entries: List[Dict[str, object]] = []
+    with VERSIONS_FILE.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            entry = {
+                "version": data.get("version", "gaia-v1.0"),
+                "delta_score": float(data.get("delta_score", 0.0)),
+                "recorded_at": data.get("recorded_at"),
+            }
+            entries.append(entry)
+    if limit > 0:
+        entries = entries[-limit:]
+    return entries
+
+
+__all__ = ["learning_step", "VERSIONS_FILE", "load_learning_history"]

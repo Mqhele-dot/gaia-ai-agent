@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, Optional
+from typing import Dict, Iterable, List, Optional
 
 
 ACTION_LABELS = {
@@ -25,6 +25,8 @@ ACTION_LABELS = {
     "export_capsules_failed": "Capsule export failed",
     "export_logs": "Logs exported",
     "research_explore": "Scientific research explored",
+    "learning_history": "Learning history viewed",
+    "insight_reflect": "Strategic insight generated",
 }
 
 
@@ -53,6 +55,7 @@ class MetricsTracker:
         self._halted = False
         self._learning_version: Optional[str] = None
         self._learning_delta: Optional[float] = None
+        self._learning_history: List[float] = []
 
     def record_api_call(
         self,
@@ -83,7 +86,23 @@ class MetricsTracker:
         with self._lock:
             self._learning_version = version
             self._learning_delta = delta
+            self._learning_history.append(delta)
+            if len(self._learning_history) > 50:
+                self._learning_history = self._learning_history[-50:]
             self._last_action = _humanize("learning_step", f"Learning step Δ{delta:+.3f}")
+
+    def seed_learning_history(
+        self,
+        version: Optional[str],
+        delta: Optional[float],
+        history: Iterable[float],
+    ) -> None:
+        with self._lock:
+            if version:
+                self._learning_version = version
+            if delta is not None:
+                self._learning_delta = delta
+            self._learning_history = list(history)[-50:]
 
     def is_halted(self) -> bool:
         with self._lock:
@@ -104,6 +123,7 @@ class MetricsTracker:
                 "halted": self._halted,
                 "learning_version": self._learning_version or self._version,
                 "learning_delta": self._learning_delta,
+                "learning_history": list(self._learning_history),
             }
 
 

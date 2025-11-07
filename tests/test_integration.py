@@ -28,6 +28,12 @@ def test_capsule_flow(client):
     simulation = simulate_resp.get_json()
     assert "plan" in simulation and simulation["plan"]
 
+    learning_resp = client.post(
+        "/learning/step",
+        json={"engagement": 7.5, "success_rate": 0.9, "feedback_score": 0.8},
+    )
+    assert learning_resp.status_code == 200
+
     export_resp = client.get("/export/capsules?fmt=json")
     assert export_resp.status_code == 200
     exported = json.loads(export_resp.data.decode("utf-8"))
@@ -42,6 +48,20 @@ def test_capsule_flow(client):
     assert status["capsules_processed"] >= 1
     assert status["last_action"] == "Status checked"
     assert status["learning_version"].startswith("gaia-v")
+    assert isinstance(status["learning_history"], list)
+    assert status["learning_history"]
+
+    history_resp = client.get("/learning/history")
+    assert history_resp.status_code == 200
+    history = history_resp.get_json()["history"]
+    assert isinstance(history, list)
+    assert history
+
+    insights_resp = client.get("/insights/reflect")
+    assert insights_resp.status_code == 200
+    insights = insights_resp.get_json()
+    assert insights["metadata"]["capsules"] >= 1
+    assert isinstance(insights["insights"], list)
 
     data_root: Path = client.data_root
     activity = data_root / "logs" / "activity.jsonl"
