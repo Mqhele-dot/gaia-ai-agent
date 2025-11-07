@@ -1,862 +1,1397 @@
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => document.querySelectorAll(selector);
+const $ = (selector, scope = document) => scope.querySelector(selector);
+const $$ = (selector, scope = document) => Array.from(scope.querySelectorAll(selector));
 
-const statusEls = {
-  uptime: $('#status-uptime'),
-  version: $('#status-version'),
-  calls: $('#status-calls'),
-  capsules: $('#status-capsules'),
-  avg: $('#status-avg'),
-  last: $('#status-last'),
-  lastIcon: $('#status-last-icon'),
-  halted: $('#halted-banner'),
-  autoStatus: $('#auto-status'),
-  learningVersion: $('#learning-version'),
-  learningDelta: $('#learning-delta'),
-  learningTrend: $('#learning-trend'),
-  learningAverage: $('#learning-average'),
-  learningBest: $('#learning-best'),
-  learningWorst: $('#learning-worst'),
-  learningSignal: $('#learning-signal'),
-  logOutput: $('#log-output'),
-  capsuleList: $('#capsule-list'),
-  actionsOutput: $('#actions-output'),
-  simulationOutput: $('#simulation-output'),
-  researchOutput: $('#research-output'),
-  insightsSummary: $('#insights-summary'),
-  insightsOutput: $('#insights-output'),
-  insightsNext: $('#insights-next'),
-  insightsReflections: $('#insights-reflections'),
+const appState = {
+  status: null,
+  quickChecks: null,
+  capsules: [],
+  capsuleMeta: new Map(),
+  capsulePage: 1,
+  capsulePageSize: 25,
+  capsuleFilters: { query: '', tag: '', status: '' },
+  capsuleSelection: new Set(),
+  capsuleVirtual: { rowHeight: 56, scrollTop: 0 },
+  researchQueue: [],
+  researchHistory: [],
+  insights: [],
+  simulations: [],
+  logs: [],
+  exports: [],
+  presets: [],
+  autoRefresh: true,
+  autoLoops: {},
+  learningHistory: [],
+  learningRange: 30,
+  halted: false,
+  activeSection: 'section-actions',
 };
 
-const state = {
-  learningTrend: [],
-  currentCapsule: null,
-  autoIntervals: {
-    analyze: null,
-    simulate: null,
-    learning: null,
-    research: null,
-    insights: null,
+const api = {
+  async getStatus() {
+    return fetch('/status').then((resp) => resp.json());
   },
-  lastLearningDelta: null,
-  researchTopics: [
-    'sustainable energy',
-    'circular economy',
-    'climate resilience',
-    'green infrastructure',
-    'eco-innovation',
-  ],
-  researchIndex: 0,
+  async runQuickChecks() {
+    return fetch('/ops/quick-checks').then((resp) => resp.json());
+  },
+  async listCapsules(params = {}) {
+    const url = new URL('/capsules/list', window.location.origin);
+    if (params.tag) url.searchParams.set('tag', params.tag);
+    if (params.q) url.searchParams.set('q', params.q);
+    return fetch(url.toString()).then((resp) => resp.json());
+  },
+  async saveCapsule(payload) {
+    return fetch('/capsules/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(async (resp) => {
+      if (!resp.ok) {
+        const error = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw error;
+      }
+      return resp.json();
+    });
+  },
+  async analyzeCapsule(payload) {
+    return fetch('/capsules/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(async (resp) => {
+      if (!resp.ok) {
+        const error = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw error;
+      }
+      return resp.json();
+    });
+  },
+  async simulateCapsule(payload) {
+    return fetch('/simulate/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(async (resp) => {
+      if (!resp.ok) {
+        const error = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw error;
+      }
+      return resp.json();
+    });
+  },
+  async runLearning(payload) {
+    return fetch('/learning/step', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(async (resp) => {
+      if (!resp.ok) {
+        const error = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw error;
+      }
+      return resp.json();
+    });
+  },
+  async proposeUpgrade(payload) {
+    return fetch('/upgrades/propose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(async (resp) => {
+      if (!resp.ok) {
+        const error = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw error;
+      }
+      return resp.json();
+    });
+  },
+  async runResearch(payload) {
+    return fetch('/research/explore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(async (resp) => {
+      if (!resp.ok) {
+        const error = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw error;
+      }
+      return resp.json();
+    });
+  },
+  async fetchLearningHistory() {
+    return fetch('/learning/history').then((resp) => resp.json());
+  },
+  async fetchInsights() {
+    return fetch('/insights/reflect').then((resp) => resp.json());
+  },
+  async fetchLogs() {
+    return fetch('/export/logs').then((resp) => resp.text());
+  },
+  async exportCapsules(format) {
+    return fetch(`/export/capsules?fmt=${format}`).then((resp) => resp.blob());
+  },
+  async killSwitch(token) {
+    return fetch('/admin/kill', {
+      method: 'POST',
+      headers: { 'X-ADMIN-TOKEN': token },
+    }).then(async (resp) => {
+      if (!resp.ok) {
+        const error = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw error;
+      }
+      return resp.json();
+    });
+  },
 };
 
-const autoControls = {
-  analyze: $('#auto-analyze'),
-  simulate: $('#auto-simulate'),
-  learning: $('#auto-learning'),
-  research: $('#auto-research'),
-  insights: $('#auto-insights'),
+const ui = {
+  toastTemplate: $('#toast-template'),
+  toastRoot: $('#toast-root'),
+  navItems: $$('.nav-item'),
+  sectionContainer: $('#main-content'),
+  quickChecks: {
+    pills: $('#quick-check-pills'),
+    content: $('#quick-check-content'),
+    details: $('#quick-check-details'),
+    toggle: $('#quick-checks-expand'),
+    rerun: $('#quick-checks-rerun'),
+  },
+  status: {
+    uptime: $('#status-uptime'),
+    version: $('#status-version'),
+    apiRate: $('#status-api-rate'),
+    capsules: $('#status-capsules'),
+    avg: $('#status-avg'),
+    last: $('#status-last'),
+    lastDelta: $('#status-last-delta'),
+    trendApi: $('#trend-api'),
+    trendCapsules: $('#trend-capsules'),
+    trendLatency: $('#trend-latency'),
+    trendVersion: $('#trend-version'),
+    haltedBanner: $('#halted-banner'),
+    environment: $('#status-environment'),
+  },
+  actions: {
+    instruction: $('#capsule-instruction'),
+    context: $('#capsule-context'),
+    tag: $('#capsule-tag'),
+    source: $('#capsule-source'),
+    instructionCounter: $('#instruction-counter'),
+    contextCounter: $('#context-counter'),
+    output: $('#actions-output'),
+    presetList: $('#preset-list'),
+  },
+  chips: {
+    analyze: $('#chip-auto-analyze'),
+    simulate: $('#chip-auto-simulate'),
+    learning: $('#chip-auto-learning'),
+    research: $('#chip-auto-research'),
+    insights: $('#chip-auto-insights'),
+  },
+  capsuleTable: {
+    body: $('#capsule-table'),
+    empty: $('#capsule-empty'),
+    selectAll: $('#capsule-select-all'),
+    pageLabel: $('#capsule-page'),
+    prev: $('#capsule-prev'),
+    next: $('#capsule-next'),
+    bulk: $('#capsule-bulk-actions'),
+    bulkCount: $('#capsule-selected-count'),
+    drawer: $('#capsule-drawer'),
+    drawerClose: $('#capsule-drawer-close'),
+    drawerContent: $('#capsule-drawer-content'),
+    filterQuery: $('#filter-query'),
+    filterTag: $('#filter-tag'),
+    filterStatus: $('#filter-status'),
+    quickFilters: $$('.quick-filters button'),
+  },
+  research: {
+    form: $('#research-form'),
+    input: $('#research-query'),
+    queue: $('#research-queue'),
+    history: $('#research-history'),
+  },
+  insights: {
+    stream: $('#insights-stream'),
+  },
+  simulation: {
+    list: $('#simulation-list'),
+  },
+  learning: {
+    chart: $('#learning-chart'),
+    ranges: $$('.learning-range button'),
+    events: $('#learning-events'),
+    lastDelta: $('#learning-last-delta'),
+    version: $('#learning-version'),
+  },
+  logs: {
+    stream: $('#log-stream'),
+    level: $('#log-level'),
+  },
+  exports: {
+    history: $('#export-history'),
+    buttons: $$('.exports-actions button'),
+  },
+  commandPalette: {
+    root: $('#search-modal'),
+    input: $('#command-input'),
+    results: $('#command-results'),
+    close: $('#command-close'),
+  },
+  primaryActions: {
+    save: $('#action-save'),
+    analyze: $('#action-analyze'),
+    simulate: $('#action-simulate'),
+    learning: $('#action-learning'),
+    upgrade: $('#action-upgrade'),
+    dryrun: $('#action-dryrun'),
+  },
+  autoRefresh: $('#auto-refresh'),
+  refreshButton: $('#refresh-status'),
+  killSwitch: $('#kill-switch'),
+  helpButton: $('#open-help'),
 };
 
-const ACTION_INDICATORS = {
-  status: '📡',
-  capsule_saved: '🗂️',
-  capsule_rejected: '⚠️',
-  capsules_list: '📋',
-  capsule_analyze: '🧮',
-  capsule_analysis_blocked: '🚫',
-  simulate: '🧪',
-  simulate_blocked: '⛔',
-  learning_step: '📈',
-  learning_history: '🗃️',
-  upgrade_accepted: '✅',
-  upgrade_rejected: '❎',
-  upgrade_blocked: '⛔',
-  kill_switch: '🛑',
-  kill_denied: '🔒',
-  export_capsules: '⬇️',
-  export_logs: '📥',
-  research_explore: '🔭',
-  insight_reflect: '💡',
-  version_set: '🧬',
-  system_halted: '🛑',
-  system_resumed: '▶️',
-};
-
-const AUTO_LABELS = {
-  analyze: 'Analyze',
-  simulate: 'Simulate',
-  learning: 'Learn',
-  research: 'Research',
-  insights: 'Insights',
-};
+function toast(message, options = {}) {
+  if (!ui.toastTemplate || !ui.toastRoot) return;
+  const fragment = ui.toastTemplate.content.cloneNode(true);
+  const toastEl = fragment.querySelector('.toast');
+  const messageEl = fragment.querySelector('.toast-message');
+  const closeBtn = fragment.querySelector('.toast-close');
+  const copyBtn = fragment.querySelector('.toast-copy');
+  const runId = options.runId || `run-${Date.now()}`;
+  messageEl.textContent = message;
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(runId).catch(() => {});
+    copyBtn.textContent = 'Copied';
+    setTimeout(() => {
+      copyBtn.textContent = 'Copy ID';
+    }, 1200);
+  });
+  closeBtn.addEventListener('click', () => {
+    toastEl.remove();
+  });
+  ui.toastRoot.appendChild(fragment);
+  setTimeout(() => toastEl.remove(), options.duration || 6000);
+}
 
 function formatDuration(seconds) {
-  const total = Number(seconds) || 0;
-  if (total < 60) {
-    return `${Math.max(0, Math.round(total))}s`;
+  const s = Math.max(0, Number(seconds) || 0);
+  if (s < 60) return `${Math.round(s)}s`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const sec = Math.round(s % 60);
+    return `${m}m ${sec}s`;
   }
-  const minutes = Math.floor(total / 60);
-  const remainingSeconds = Math.round(total % 60);
-  if (minutes < 60) {
-    return `${minutes}m ${remainingSeconds}s`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return `${hours}h ${remainingMinutes}m`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${h}h ${m}m`;
 }
 
-function formatLastAction(label, fallback) {
-  const source = label || fallback;
-  if (!source) return 'Awaiting activity';
-  const trimmed = String(source).trim();
-  if (!trimmed) return 'Awaiting activity';
-  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+function humanize(value) {
+  if (!value) return '0';
+  if (value > 1e6) return `${(value / 1e6).toFixed(1)}M`;
+  if (value > 1e3) return `${(value / 1e3).toFixed(1)}k`;
+  return `${value}`;
 }
 
-function applyLastActionVisual(event) {
-  if (!statusEls.lastIcon) return;
-  const icon = ACTION_INDICATORS[event] || '•';
-  statusEls.lastIcon.textContent = icon;
-}
-
-function updateAutoStatus() {
-  if (!statusEls.autoStatus) return;
-  const active = Object.entries(autoControls)
-    .filter(([, control]) => control && control.checked)
-    .map(([key]) => AUTO_LABELS[key] || key);
-  if (!active.length) {
-    statusEls.autoStatus.textContent = 'Manual mode';
-    statusEls.autoStatus.classList.remove('active');
-    return;
-  }
-  statusEls.autoStatus.textContent = `Auto: ${active.join(', ')}`;
-  statusEls.autoStatus.classList.add('active');
-}
-
-function numericTrend() {
-  return state.learningTrend.filter((value) => typeof value === 'number' && !Number.isNaN(value));
-}
-
-function renderLearningStats(values = numericTrend()) {
-  if (!statusEls.learningAverage || !statusEls.learningBest || !statusEls.learningWorst) {
-    return;
-  }
-  if (!values.length) {
-    statusEls.learningAverage.textContent = '-';
-    statusEls.learningBest.textContent = '-';
-    statusEls.learningWorst.textContent = '-';
-    if (statusEls.learningSignal) {
-      statusEls.learningSignal.textContent = 'Awaiting learning activity.';
-      statusEls.learningSignal.classList.remove('signal-positive', 'signal-negative', 'signal-neutral');
-    }
-    return;
-  }
-  const recent = values.slice(-10);
-  const average = recent.reduce((sum, value) => sum + value, 0) / recent.length;
-  const best = Math.max(...values);
-  const worst = Math.min(...values);
-  const latest = values[values.length - 1];
-  statusEls.learningAverage.textContent = average.toFixed(3);
-  statusEls.learningBest.textContent = best.toFixed(3);
-  statusEls.learningWorst.textContent = worst.toFixed(3);
-  if (statusEls.learningSignal) {
-    statusEls.learningSignal.classList.remove('signal-positive', 'signal-negative', 'signal-neutral');
-    if (latest > 0.001) {
-      statusEls.learningSignal.textContent = `Momentum rising (+${latest.toFixed(3)})`;
-      statusEls.learningSignal.classList.add('signal-positive');
-    } else if (latest < -0.001) {
-      statusEls.learningSignal.textContent = `Momentum softening (${latest.toFixed(3)})`;
-      statusEls.learningSignal.classList.add('signal-negative');
-    } else {
-      statusEls.learningSignal.textContent = `Momentum steady (${latest.toFixed(3)})`;
-      statusEls.learningSignal.classList.add('signal-neutral');
-    }
-  }
-}
-
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderJSON(el, data) {
-  if (!el) return;
-  el.classList.remove('placeholder');
-  if (typeof data === 'string') {
-    el.innerHTML = `<p>${escapeHtml(data)}</p>`;
-    return;
-  }
-  const formatted = escapeHtml(JSON.stringify(data, null, 2));
-  el.innerHTML = `<pre>${formatted}</pre>`;
-}
-
-function renderSimulation(data) {
-  const el = statusEls.simulationOutput;
-  if (!el) return;
-  el.classList.remove('placeholder');
-  if (!data || data.error) {
-    renderJSON(el, data || { error: 'Simulation failed' });
-    return;
-  }
-  const plan = Array.isArray(data.plan) ? data.plan : [];
-  const risks = Array.isArray(data.risks) ? data.risks : [];
-  const impact = data.expected_impact || {};
-  const impactKeys = Object.keys(impact);
-  el.innerHTML = `
-    <div class="sim-grid">
-      <div class="sim-card">
-        <h3>Plan</h3>
-        ${plan.length ? `<ol>${plan.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>` : '<p class="muted">No plan generated.</p>'}
-      </div>
-      <div class="sim-card">
-        <h3>Risks</h3>
-        ${risks.length ? `<ul>${risks.map((risk) => `<li>${escapeHtml(risk)}</li>`).join('')}</ul>` : '<p class="muted">No significant risks detected.</p>'}
-      </div>
-      <div class="sim-card">
-        <h3>Expected Impact</h3>
-        ${impactKeys.length
-          ? `<div class="sim-impact">${impactKeys
-              .map(
-                (key) => `
-                  <div>
-                    <span class="muted">${escapeHtml(key)}</span>
-                    <strong>${escapeHtml(impact[key])}</strong>
-                  </div>
-                `,
-              )
-              .join('')}</div>`
-          : '<p class="muted">Impact assessment pending.</p>'}
-      </div>
-    </div>
-  `;
-}
-
-function renderResearch(data) {
-  const el = statusEls.researchOutput;
-  if (!el) return;
-  if (!data || data.error) {
-    renderJSON(el, data || { error: 'Unable to explore research.' });
-    return;
-  }
-  const results = Array.isArray(data.results) ? data.results : [];
-  if (!results.length) {
-    el.innerHTML = '<p class="muted">No research highlights available yet.</p>';
-    return;
-  }
-  el.innerHTML = `
-    <div class="research-results">
-      ${results
-        .map(
-          (item) => `
-            <article class="research-card">
-              <h3>${escapeHtml(item.title)}</h3>
-              <p class="research-summary">${escapeHtml(item.summary || 'Summary unavailable.')}</p>
-              ${item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">View source</a>` : ''}
-            </article>
-          `,
-        )
-        .join('')}
-    </div>
-    <p class="muted">Source: ${escapeHtml(data.source || 'curated')}</p>
-  `;
-}
-
-function renderInsights(data) {
-  const summaryEl = statusEls.insightsSummary;
-  const grid = statusEls.insightsOutput;
-  const nextEl = statusEls.insightsNext;
-  const reflectionsEl = statusEls.insightsReflections;
-  if (!grid) return;
-  if (!data || data.error) {
-    if (summaryEl) summaryEl.textContent = 'Unable to generate insights right now.';
-    renderJSON(grid, data || { error: 'Insight generation failed.' });
-    if (nextEl) nextEl.textContent = '';
-    if (reflectionsEl) reflectionsEl.innerHTML = '<p class="muted">No reflections available.</p>';
-    return;
-  }
-  if (summaryEl) {
-    summaryEl.textContent = data.summary || 'Gaia reflections available.';
-  }
-  const insights = Array.isArray(data.insights) ? data.insights : [];
-  if (!insights.length) {
-    grid.innerHTML = '<p class="muted">No insights yet. Capture a capsule to begin.</p>';
+function updateStatus(status) {
+  appState.status = status;
+  if (!status) return;
+  ui.status.uptime.textContent = formatDuration(status.uptime_s);
+  ui.status.version.textContent = status.version;
+  const apiRate = status.rates?.api_per_min ?? 0;
+  ui.status.apiRate.textContent = apiRate.toFixed(2);
+  ui.status.avg.textContent = `${Number(status.processing_ms_avg || 0).toFixed(1)} ms`;
+  ui.status.capsules.textContent = humanize(status.capsules_processed || 0);
+  const lastAction = status.last_action_label || status.last_action || 'Idle';
+  ui.status.last.textContent = lastAction;
+  const lastEvent = status.recent_events?.[0];
+  if (lastEvent && lastEvent.ts) {
+    const ts = new Date(lastEvent.ts);
+    ui.status.lastDelta.textContent = ts.toLocaleTimeString();
   } else {
-    grid.innerHTML = insights
-      .map((insight) => {
-        const indicator = insight.indicator || {};
-        const confidence = Math.round((insight.confidence ?? 0) * 100);
-        return `
-          <div class="insight-card">
-            <h3>${escapeHtml(insight.title || 'Insight')}</h3>
-            <p class="insight-message">${escapeHtml(insight.message || '')}</p>
-            <div class="insight-indicator">
-              <div class="meter"><span style="width:${Math.min(100, Math.max(0, confidence))}%"></span></div>
-              <span class="insight-confidence">${confidence}% confident</span>
-            </div>
-            ${indicator.label ? `<small class="muted">${escapeHtml(indicator.label)} • ${escapeHtml(indicator.value ?? '')} ${escapeHtml(indicator.unit ?? '')}</small>` : ''}
-          </div>
-        `;
-      })
-      .join('');
+    ui.status.lastDelta.textContent = '—';
   }
-  if (nextEl) {
-    const next = Array.isArray(data.recommended_next) ? data.recommended_next : [];
-    if (next.length) {
-      nextEl.innerHTML = `
-        <strong>Recommended follow-up:</strong>
-        <ul>${next.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
-        <p class="muted">Autonomous thought: ${escapeHtml(data.autonomous_thought || '')}</p>
-      `;
-    } else {
-      nextEl.textContent = '';
-    }
-  }
-  if (reflectionsEl) {
-    const reflections = Array.isArray(data.autonomous_reflections) ? data.autonomous_reflections : [];
-    if (reflections.length) {
-      reflectionsEl.innerHTML = `
-        <h3>Independent reflections</h3>
-        <ul>${reflections.map((entry) => `<li>${escapeHtml(entry)}</li>`).join('')}</ul>
-      `;
-    } else {
-      reflectionsEl.innerHTML = '<p class="muted">No reflections recorded.</p>';
-    }
-  }
+  const deltaApi = status.trends?.api_calls ?? 0;
+  const deltaCapsules = status.trends?.capsules ?? 0;
+  const deltaLatency = status.trends?.latency_ms ?? 0;
+  ui.status.trendApi.textContent = `Δ${deltaApi}`;
+  ui.status.trendCapsules.textContent = `Δ${deltaCapsules}`;
+  ui.status.trendLatency.textContent = `Δ${deltaLatency.toFixed(1)}`;
+  ui.status.trendVersion.textContent = status.learning_version || status.version;
+  appState.halted = Boolean(status.halted);
+  ui.status.haltedBanner.hidden = !appState.halted;
+  updateBadges();
 }
 
-function updateLearningMetrics(version, delta, { track = false } = {}) {
-  if (statusEls.learningVersion) {
-    statusEls.learningVersion.textContent = version || '-';
-  }
-  if (statusEls.learningDelta) {
-    statusEls.learningDelta.textContent =
-      typeof delta === 'number' && !Number.isNaN(delta) ? delta.toFixed(3) : '-';
-  }
-  if (typeof delta === 'number' && !Number.isNaN(delta)) {
-    state.lastLearningDelta = delta;
-    if (track) {
-      state.learningTrend.push(delta);
-      if (state.learningTrend.length > 50) {
-        state.learningTrend = state.learningTrend.slice(-50);
-      }
-      drawTrend();
-    }
-  }
-  renderLearningStats();
+function updateBadges() {
+  $('#badge-capsules').textContent = appState.capsules.length.toString();
+  $('#badge-insights').textContent = appState.insights.length.toString();
+  $('#badge-research').textContent = appState.researchHistory.length.toString();
+  $('#badge-simulation').textContent = appState.simulations.length.toString();
+  $('#badge-learning').textContent = appState.learningHistory.length.toString();
+  $('#badge-logs').textContent = appState.logs.length.toString();
+  $('#badge-exports').textContent = appState.exports.length.toString();
 }
 
-function setCurrentCapsule(capsule, { updateForm = false } = {}) {
-  if (!capsule) return;
-  state.currentCapsule = capsule;
-  if (updateForm) {
-    const textEl = $('#capsule-text');
-    const tagEl = $('#capsule-tag');
-    if (textEl) textEl.value = capsule.text || '';
-    if (tagEl) tagEl.value = capsule.tag || '';
-  }
-}
-
-function getActiveCapsuleText() {
-  const textEl = $('#capsule-text');
-  const tagEl = $('#capsule-tag');
-  const text = textEl ? textEl.value.trim() : '';
-  if (text) {
-    return text;
-  }
-  if (state.currentCapsule && state.currentCapsule.text) {
-    if (textEl && !textEl.value) {
-      textEl.value = state.currentCapsule.text;
-    }
-    if (tagEl && !tagEl.value) {
-      tagEl.value = state.currentCapsule.tag || '';
-    }
-    return state.currentCapsule.text;
-  }
-  return '';
-}
-
-async function fetchJSON(url, options = {}) {
-  const response = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
+function renderQuickChecks(result) {
+  appState.quickChecks = result;
+  if (!result) return;
+  ui.quickChecks.pills.innerHTML = '';
+  const { summary, checks } = result;
+  const total = summary.passed + summary.warned + summary.failed;
+  const summaryItems = [
+    { type: 'pass', label: `${summary.passed} Pass` },
+    { type: 'warn', label: `${summary.warned} Warn` },
+    { type: 'fail', label: `${summary.failed} Fail` },
+  ];
+  summaryItems.forEach((item) => {
+    const pill = document.createElement('span');
+    pill.className = `check-pill ${item.type}`;
+    pill.textContent = item.label;
+    ui.quickChecks.pills.appendChild(pill);
   });
-  const text = await response.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch (err) {
-    data = { raw: text };
+  ui.quickChecks.content.innerHTML = '';
+  checks.forEach((check) => {
+    const card = document.createElement('div');
+    card.className = `quick-check-card ${check.status}`;
+    const heading = document.createElement('h3');
+    heading.textContent = check.label;
+    const status = document.createElement('span');
+    status.className = 'status';
+    status.textContent = check.status.toUpperCase();
+    const detail = document.createElement('p');
+    detail.textContent = check.detail;
+    const remediation = document.createElement('p');
+    remediation.innerHTML = `<strong>Remediation:</strong> ${check.remediation}`;
+    card.append(heading, status, detail, remediation);
+    ui.quickChecks.content.appendChild(card);
+  });
+  toast(`Quick checks complete (${total} checks)`, { runId: `qc-${Date.now()}` });
+}
+
+function updateCounters() {
+  const instructionLength = appState.actionsInstruction?.length || 0;
+  const contextLength = appState.actionsContext?.length || 0;
+  ui.actions.instructionCounter.textContent = `${instructionLength} chars • ${Math.ceil(instructionLength / 4)} tokens`;
+  ui.actions.contextCounter.textContent = `${contextLength} chars • ${Math.ceil(contextLength / 4)} tokens`;
+  renderActionKPIs();
+}
+
+function setInstruction(value) {
+  appState.actionsInstruction = value;
+  updateCounters();
+}
+
+function setContext(value) {
+  appState.actionsContext = value;
+  updateCounters();
+}
+
+function renderActionKPIs() {
+  const tokens = Math.ceil((appState.actionsInstruction?.length || 0 + appState.actionsContext?.length || 0) / 4);
+  const auto = ['analyze', 'simulate', 'learning', 'research', 'insights']
+    .filter((key) => ui.chips[key]?.checked)
+    .map((key) => key.charAt(0).toUpperCase() + key.slice(1));
+  renderKPIs('#actions-kpis', [
+    { label: 'Tokens', value: tokens.toString() },
+    { label: 'Presets', value: appState.presets.length.toString() },
+    { label: 'Auto', value: auto.join(', ') || 'Manual' },
+  ]);
+}
+
+function buildCapsuleText() {
+  const instruction = appState.actionsInstruction || '';
+  const context = appState.actionsContext || '';
+  if (!context.trim()) return instruction.trim();
+  return `${instruction.trim()}\n\nContext:\n${context.trim()}`;
+}
+
+function renderKPIs(containerId, entries) {
+  const container = $(containerId);
+  if (!container) return;
+  container.innerHTML = '';
+  entries.forEach((entry) => {
+    const card = document.createElement('div');
+    card.className = 'kpi-card';
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = entry.label;
+    const value = document.createElement('strong');
+    value.textContent = entry.value;
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = entry.hint || '';
+    card.append(label, value);
+    if (entry.hint) card.appendChild(hint);
+    container.appendChild(card);
+  });
+}
+
+function capsuleMatchesFilters(capsule) {
+  const { query, tag, status } = appState.capsuleFilters;
+  if (tag && capsule.tag !== tag) return false;
+  if (query && !capsule.text.toLowerCase().includes(query.toLowerCase())) return false;
+  if (status) {
+    const meta = appState.capsuleMeta.get(capsule.id);
+    if (!meta || meta.status !== status) return false;
   }
-  if (!response.ok) {
-    throw data;
+  return true;
+}
+
+function filteredCapsules() {
+  return appState.capsules.filter(capsuleMatchesFilters);
+}
+
+function renderCapsuleTable() {
+  const rows = filteredCapsules();
+  appState.capsuleSelection.forEach((id) => {
+    if (!rows.find((capsule) => capsule.id === id)) {
+      appState.capsuleSelection.delete(id);
+    }
+  });
+  const startIndex = (appState.capsulePage - 1) * appState.capsulePageSize;
+  const pageItems = rows.slice(startIndex, startIndex + appState.capsulePageSize);
+  if (!appState.capsuleVirtual.viewport) {
+    ui.capsuleTable.body.innerHTML = '';
+    const topSpacer = document.createElement('div');
+    topSpacer.className = 'virtual-spacer top';
+    const viewport = document.createElement('div');
+    viewport.className = 'virtual-viewport';
+    const bottomSpacer = document.createElement('div');
+    bottomSpacer.className = 'virtual-spacer bottom';
+    ui.capsuleTable.body.append(topSpacer, viewport, bottomSpacer);
+    appState.capsuleVirtual.topSpacer = topSpacer;
+    appState.capsuleVirtual.viewport = viewport;
+    appState.capsuleVirtual.bottomSpacer = bottomSpacer;
+    ui.capsuleTable.body.addEventListener('scroll', updateVirtualCapsuleTable);
   }
-  return data;
+  if (!pageItems.length) {
+    ui.capsuleTable.empty.hidden = false;
+  } else {
+    ui.capsuleTable.empty.hidden = true;
+  }
+  appState.capsuleVirtual.rows = pageItems;
+  ui.capsuleTable.body.scrollTop = 0;
+  updateVirtualCapsuleTable();
+  const pageCount = Math.max(1, Math.ceil(rows.length / appState.capsulePageSize));
+  if (appState.capsulePage > pageCount) {
+    appState.capsulePage = pageCount;
+    return renderCapsuleTable();
+  }
+  ui.capsuleTable.pageLabel.textContent = `Page ${appState.capsulePage} / ${pageCount}`;
+  updateBulkActions();
+  renderKPIs('#capsules-kpis', [
+    { label: 'Total', value: humanize(appState.capsules.length) },
+    { label: 'Selected', value: appState.capsuleSelection.size.toString() },
+    { label: 'Success rate', value: '100%' },
+    { label: 'Cost today', value: '$0.00' },
+  ]);
+}
+
+function buildCapsuleRow(capsule) {
+  const meta = appState.capsuleMeta.get(capsule.id) || {};
+  const row = document.createElement('div');
+  row.className = 'table-row';
+  row.dataset.id = capsule.id;
+
+  const checkboxCell = document.createElement('div');
+  checkboxCell.className = 'table-cell checkbox';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = appState.capsuleSelection.has(capsule.id);
+  checkbox.addEventListener('change', () => {
+    if (checkbox.checked) {
+      appState.capsuleSelection.add(capsule.id);
+    } else {
+      appState.capsuleSelection.delete(capsule.id);
+    }
+    updateBulkActions();
+  });
+  checkboxCell.appendChild(checkbox);
+
+  const idCell = document.createElement('div');
+  idCell.className = 'table-cell';
+  idCell.textContent = capsule.id;
+
+  const tagCell = document.createElement('div');
+  tagCell.className = 'table-cell';
+  tagCell.textContent = capsule.tag;
+
+  const sourceCell = document.createElement('div');
+  sourceCell.className = 'table-cell';
+  sourceCell.textContent = meta.source || 'operator';
+
+  const statusCell = document.createElement('div');
+  statusCell.className = 'table-cell';
+  statusCell.textContent = (meta.status || 'ok').toUpperCase();
+
+  const createdCell = document.createElement('div');
+  createdCell.className = 'table-cell';
+  createdCell.textContent = new Date(capsule.created_at).toLocaleString();
+
+  const lastRunCell = document.createElement('div');
+  lastRunCell.className = 'table-cell';
+  lastRunCell.textContent = meta.lastRun ? new Date(meta.lastRun).toLocaleString() : '—';
+
+  const actionsCell = document.createElement('div');
+  actionsCell.className = 'table-cell actions';
+  const openBtn = document.createElement('button');
+  openBtn.className = 'ghost';
+  openBtn.textContent = 'View';
+  openBtn.addEventListener('click', () => openCapsuleDrawer(capsule.id));
+  const simulateBtn = document.createElement('button');
+  simulateBtn.className = 'ghost';
+  simulateBtn.textContent = 'Simulate';
+  simulateBtn.addEventListener('click', () => triggerSimulation(capsule));
+  actionsCell.append(openBtn, simulateBtn);
+
+  row.append(
+    checkboxCell,
+    idCell,
+    tagCell,
+    sourceCell,
+    statusCell,
+    createdCell,
+    lastRunCell,
+    actionsCell,
+  );
+  return row;
+}
+
+function updateVirtualCapsuleTable() {
+  const { rowHeight, rows = [], viewport, topSpacer, bottomSpacer } = appState.capsuleVirtual;
+  if (!viewport || !topSpacer || !bottomSpacer) return;
+  const container = ui.capsuleTable.body;
+  const visibleCount = Math.ceil((container.clientHeight || 1) / rowHeight) + 4;
+  const startIndex = Math.max(0, Math.floor((container.scrollTop || 0) / rowHeight));
+  const endIndex = Math.min(rows.length, startIndex + visibleCount);
+  const offsetTop = startIndex * rowHeight;
+  const offsetBottom = Math.max(0, (rows.length - endIndex) * rowHeight);
+  topSpacer.style.height = `${offsetTop}px`;
+  bottomSpacer.style.height = `${offsetBottom}px`;
+  viewport.innerHTML = '';
+  rows.slice(startIndex, endIndex).forEach((capsule) => {
+    viewport.appendChild(buildCapsuleRow(capsule));
+  });
+}
+
+function updateBulkActions() {
+  const count = appState.capsuleSelection.size;
+  ui.capsuleTable.bulk.hidden = count === 0;
+  ui.capsuleTable.bulkCount.textContent = `${count} selected`;
+  ui.capsuleTable.selectAll.checked = count && count === filteredCapsules().length;
+}
+
+function openCapsuleDrawer(id) {
+  const capsule = appState.capsules.find((item) => item.id === id);
+  if (!capsule) return;
+  const meta = appState.capsuleMeta.get(id) || {};
+  ui.capsuleTable.drawerContent.innerHTML = '';
+  const info = [
+    ['Tag', capsule.tag],
+    ['Source', meta.source || 'operator'],
+    ['Status', (meta.status || 'ok').toUpperCase()],
+    ['Created', new Date(capsule.created_at).toLocaleString()],
+    ['Last run', meta.lastRun ? new Date(meta.lastRun).toLocaleString() : '—'],
+  ];
+  info.forEach(([label, value]) => {
+    const p = document.createElement('p');
+    const strong = document.createElement('strong');
+    strong.textContent = `${label}: `;
+    const span = document.createElement('span');
+    span.textContent = value;
+    p.append(strong, span);
+    ui.capsuleTable.drawerContent.appendChild(p);
+  });
+  const heading = document.createElement('h4');
+  heading.textContent = 'Text';
+  const pre = document.createElement('pre');
+  pre.textContent = capsule.text;
+  ui.capsuleTable.drawerContent.append(heading, pre);
+  ui.capsuleTable.drawer.setAttribute('aria-hidden', 'false');
+}
+
+function closeCapsuleDrawer() {
+  ui.capsuleTable.drawer.setAttribute('aria-hidden', 'true');
+}
+
+function renderResearch() {
+  ui.research.queue.innerHTML = '';
+  appState.researchQueue.forEach((item, index) => {
+    const card = document.createElement('div');
+    card.className = 'research-card';
+    const header = document.createElement('header');
+    header.innerHTML = `<strong>#${index + 1} • ${item.topic}</strong><span class="badge-chip ${item.status}">${item.status.toUpperCase()}</span>`;
+    const body = document.createElement('p');
+    body.textContent = item.summary || 'Awaiting exploration.';
+    const actionBar = document.createElement('div');
+    actionBar.className = 'table-cell actions';
+    const runBtn = document.createElement('button');
+    runBtn.className = 'ghost';
+    runBtn.textContent = 'Run now';
+    runBtn.addEventListener('click', () => processResearchItem(item));
+    const pinBtn = document.createElement('button');
+    pinBtn.className = 'ghost';
+    pinBtn.textContent = 'Pin to capsule';
+    pinBtn.addEventListener('click', () => pinResearchToCapsule(item));
+    actionBar.append(runBtn, pinBtn);
+    card.append(header, body, actionBar);
+    ui.research.queue.appendChild(card);
+  });
+  ui.research.history.innerHTML = '';
+  appState.researchHistory.slice(-5).reverse().forEach((item) => {
+    const card = document.createElement('div');
+    card.className = 'research-card';
+    card.innerHTML = `<header><strong>${item.topic}</strong><span>${new Date(item.timestamp).toLocaleString()}</span></header><p>${item.summary}</p>`;
+    ui.research.history.appendChild(card);
+  });
+  renderKPIs('#research-kpis', [
+    { label: 'Queued', value: appState.researchQueue.length.toString() },
+    { label: 'Completed', value: appState.researchHistory.length.toString() },
+    { label: 'Auto explore', value: ui.chips.research.checked ? 'On' : 'Off' },
+  ]);
+}
+
+function renderInsights(insights) {
+  appState.insights = insights || [];
+  ui.insights.stream.innerHTML = '';
+  appState.insights.forEach((insight) => {
+    const card = document.createElement('div');
+    card.className = 'insight-card';
+    const header = document.createElement('header');
+    const severity = document.createElement('span');
+    severity.className = `badge-chip ${insight.severity || 'success'}`;
+    severity.textContent = (insight.severity || 'info').toUpperCase();
+    const timestamp = document.createElement('span');
+    timestamp.textContent = new Date(insight.timestamp || Date.now()).toLocaleString();
+    header.append(severity, timestamp);
+    const body = document.createElement('p');
+    body.textContent = insight.summary || insight.message;
+    const footer = document.createElement('div');
+    footer.className = 'table-cell actions';
+    const openBtn = document.createElement('button');
+    openBtn.className = 'ghost';
+    openBtn.textContent = 'Open related items';
+    openBtn.addEventListener('click', () => {
+      if (insight.related && insight.related.capsule_id) {
+        openCapsuleDrawer(insight.related.capsule_id);
+      }
+    });
+    footer.appendChild(openBtn);
+    card.append(header, body, footer);
+    ui.insights.stream.appendChild(card);
+  });
+  renderKPIs('#insights-kpis', [
+    { label: 'Total', value: appState.insights.length.toString() },
+    { label: 'Critical', value: appState.insights.filter((i) => i.severity === 'fail').length.toString() },
+    { label: 'Warnings', value: appState.insights.filter((i) => i.severity === 'warn').length.toString() },
+  ]);
+  updateBadges();
+}
+
+function renderSimulations() {
+  ui.simulation.list.innerHTML = '';
+  appState.simulations.slice(-5).reverse().forEach((run) => {
+    const card = document.createElement('div');
+    card.className = 'simulation-card';
+    const header = document.createElement('header');
+    header.innerHTML = `<strong>${run.title}</strong><span>${new Date(run.timestamp).toLocaleString()}</span>`;
+    const details = document.createElement('p');
+    details.textContent = run.summary;
+    const metrics = document.createElement('div');
+    metrics.className = 'kpi-strip';
+    metrics.innerHTML = `
+      <div class="kpi-card"><span class="label">Impact</span><strong>${run.impact}</strong></div>
+      <div class="kpi-card"><span class="label">Risk</span><strong>${run.risk}</strong></div>
+      <div class="kpi-card"><span class="label">Cost</span><strong>${run.cost}</strong></div>
+    `;
+    card.append(header, details, metrics);
+    ui.simulation.list.appendChild(card);
+  });
+  renderKPIs('#simulation-kpis', [
+    { label: 'Runs', value: appState.simulations.length.toString() },
+    { label: 'Avg risk', value: `${average(appState.simulations.map((run) => run.riskScore || 0)).toFixed(2)}` },
+    { label: 'Next schedule', value: 'Manual' },
+  ]);
+}
+
+function average(values) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function renderLearning(history) {
+  appState.learningHistory = history || [];
+  const lastEntry = appState.learningHistory.slice(-1)[0];
+  if (lastEntry) {
+    ui.learning.lastDelta.textContent = `Δ${Number(lastEntry.delta_score || 0).toFixed(3)}`;
+    ui.learning.version.textContent = lastEntry.version;
+  }
+  drawLearningChart();
+  renderKPIs('#learning-kpis', [
+    { label: 'Snapshots', value: appState.learningHistory.length.toString() },
+    { label: 'Avg Δ', value: average(appState.learningHistory.map((h) => h.delta_score || 0)).toFixed(3) },
+    { label: 'Last', value: ui.learning.lastDelta.textContent },
+  ]);
+  updateBadges();
+}
+
+function drawLearningChart() {
+  const canvas = ui.learning.chart;
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const width = canvas.width = canvas.clientWidth || 600;
+  const height = canvas.height = canvas.clientHeight || 160;
+  ctx.clearRect(0, 0, width, height);
+  ctx.strokeStyle = '#2a3145';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, height / 2);
+  ctx.lineTo(width, height / 2);
+  ctx.stroke();
+  const history = appState.learningHistory.slice(-appState.learningRange);
+  if (!history.length) return;
+  const maxDelta = Math.max(...history.map((item) => Math.abs(item.delta_score || 0))) || 1;
+  ctx.beginPath();
+  ctx.strokeStyle = '#4cc9f0';
+  ctx.lineWidth = 2;
+  history.forEach((entry, index) => {
+    const x = (index / Math.max(1, history.length - 1)) * width;
+    const y = height / 2 - ((entry.delta_score || 0) / maxDelta) * (height / 2 - 8);
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
+}
+
+function renderLogs(text) {
+  const lines = text.trim().split('\n').filter(Boolean).slice(-200);
+  appState.logsRaw = lines.map((line) => {
+    try {
+      return JSON.parse(line);
+    } catch (error) {
+      return { raw: line };
+    }
+  });
+  applyLogFilter();
+}
+
+function applyLogFilter() {
+  const level = ui.logs.level ? ui.logs.level.value : 'all';
+  const entries = (appState.logsRaw || []).filter((entry) => {
+    if (!level || level === 'all') return true;
+    const event = String(entry.event || entry.level || '').toLowerCase();
+    if (level === 'error') return event.includes('error') || event.includes('fail');
+    if (level === 'warn') return event.includes('warn');
+    return true;
+  });
+  appState.logs = entries;
+  ui.logs.stream.innerHTML = '';
+  entries.forEach((entry) => {
+    const card = document.createElement('div');
+    card.className = 'log-line';
+    const header = document.createElement('header');
+    header.innerHTML = `<strong>${entry.event || 'log'}</strong><span>${entry.ts || ''}</span>`;
+    const pre = document.createElement('pre');
+    pre.textContent = JSON.stringify(entry, null, 2);
+    card.append(header, pre);
+    ui.logs.stream.appendChild(card);
+  });
+  renderKPIs('#logs-kpis', [
+    { label: 'Events', value: entries.length.toString() },
+    { label: 'Errors', value: entries.filter((line) => String(line.event || '').includes('error')).length.toString() },
+  ]);
+  updateBadges();
+}
+
+function recordExport(format, size) {
+  const entry = {
+    format,
+    size,
+    timestamp: new Date().toISOString(),
+    expiry: new Date(Date.now() + 86400000).toISOString(),
+  };
+  appState.exports.push(entry);
+  renderExports();
+}
+
+function renderExports() {
+  ui.exports.history.innerHTML = '';
+  appState.exports.slice(-5).reverse().forEach((entry) => {
+    const card = document.createElement('div');
+    card.className = 'export-card';
+    card.innerHTML = `
+      <header><strong>${entry.format.toUpperCase()}</strong><span>${new Date(entry.timestamp).toLocaleString()}</span></header>
+      <p>Size: ${entry.size}</p>
+      <p>Expires: ${new Date(entry.expiry).toLocaleString()}</p>
+      <button class="ghost">Re-generate</button>
+    `;
+    ui.exports.history.appendChild(card);
+  });
+  renderKPIs('#exports-kpis', [
+    { label: 'Total exports', value: appState.exports.length.toString() },
+    { label: 'Latest', value: appState.exports.slice(-1)[0]?.format?.toUpperCase() || '—' },
+  ]);
+  updateBadges();
 }
 
 async function refreshStatus() {
   try {
-    const data = await fetchJSON('/status', { method: 'GET' });
-    statusEls.uptime.textContent = formatDuration(data.uptime_s);
-    statusEls.version.textContent = data.version || '-';
-    statusEls.calls.textContent = data.api_calls ?? 0;
-    statusEls.capsules.textContent = data.capsules_processed ?? 0;
-    statusEls.avg.textContent = data.processing_ms_avg ?? 0;
-    const actionLabel = formatLastAction(data.last_action_label, data.last_action);
-    statusEls.last.textContent = actionLabel;
-    if (data.last_action) {
-      statusEls.last.title = data.last_action;
-    }
-    applyLastActionVisual(data.last_action_event);
-    statusEls.halted.classList.toggle('hidden', !data.halted);
-    const delta = typeof data.learning_delta === 'number' ? data.learning_delta : null;
-    const shouldTrack =
-      delta !== null && (state.learningTrend.length === 0 || state.learningTrend[state.learningTrend.length - 1] !== delta);
-    updateLearningMetrics(data.learning_version, delta, { track: shouldTrack });
-    if (Array.isArray(data.learning_history) && data.learning_history.length) {
-      state.learningTrend = data.learning_history.map((value) => Number(value)).filter((value) => !Number.isNaN(value));
-      renderLearningStats();
-      drawTrend();
-    }
+    const status = await api.getStatus();
+    updateStatus(status);
   } catch (error) {
-    console.error('Status error', error);
+    toast(`Status error: ${error.error || error.message || error}`, { runId: `status-${Date.now()}` });
   }
 }
 
-async function fetchLearningHistory() {
+async function refreshCapsules() {
   try {
-    const data = await fetchJSON('/learning/history');
-    if (Array.isArray(data.history) && data.history.length) {
-      state.learningTrend = data.history
-        .map((entry) => Number(entry.delta_score ?? 0))
-        .filter((value) => !Number.isNaN(value));
-      const latest = data.history[data.history.length - 1];
-      updateLearningMetrics(latest.version, Number(latest.delta_score ?? 0), { track: false });
-      renderLearningStats();
-      drawTrend();
-    }
-  } catch (error) {
-    console.warn('Learning history unavailable', error);
-  }
-}
-
-async function saveCapsule() {
-  const textEl = $('#capsule-text');
-  const tagEl = $('#capsule-tag');
-  const text = textEl ? textEl.value.trim() : '';
-  const tag = tagEl && tagEl.value.trim() ? tagEl.value.trim() : 'general';
-  if (!text) {
-    renderJSON(statusEls.actionsOutput, 'Provide text before saving.');
-    return;
-  }
-  try {
-    const data = await fetchJSON('/capsules/save', {
-      method: 'POST',
-      body: JSON.stringify({ text, tag }),
-    });
-    renderJSON(statusEls.actionsOutput, data);
-    setCurrentCapsule(data, { updateForm: false });
-    await refreshCapsules();
-    await refreshStatus();
-    if (autoControls.analyze?.checked) {
-      await analyzeCapsule({ silent: true });
-    }
-    if (autoControls.simulate?.checked) {
-      await simulateCapsule({ silent: true });
-    }
-    if (autoControls.learning?.checked) {
-      await runLearningStep({ silent: true });
-    }
-    if (autoControls.research?.checked) {
-      await exploreResearch({ silent: true, topic: nextResearchTopic() });
-    }
-    if (autoControls.insights?.checked) {
-      await fetchInsights({ silent: true });
-    }
-    updateAutoStatus();
-  } catch (error) {
-    renderJSON(statusEls.actionsOutput, error);
-  }
-}
-
-async function analyzeCapsule({ silent = false } = {}) {
-  const text = getActiveCapsuleText();
-  if (!text) {
-    if (!silent) {
-      renderJSON(statusEls.actionsOutput, 'Enter text to analyze.');
-    }
-    return;
-  }
-  try {
-    const data = await fetchJSON('/capsules/analyze', {
-      method: 'POST',
-      body: JSON.stringify({ text }),
-    });
-    if (!silent) {
-      renderJSON(statusEls.actionsOutput, data);
-    }
-    await refreshStatus();
-  } catch (error) {
-    renderJSON(statusEls.actionsOutput, error);
-  }
-}
-
-async function simulateCapsule({ silent = false } = {}) {
-  const text = getActiveCapsuleText();
-  if (!text) {
-    if (!silent) {
-      renderJSON(statusEls.simulationOutput, 'Provide text to simulate.');
-    }
-    return;
-  }
-  try {
-    const data = await fetchJSON('/simulate/run', {
-      method: 'POST',
-      body: JSON.stringify({ text }),
-    });
-    renderSimulation(data);
-    await refreshStatus();
-  } catch (error) {
-    renderJSON(statusEls.simulationOutput, error);
-  }
-}
-
-async function proposeUpgrade() {
-  const text = getActiveCapsuleText();
-  if (!text) {
-    renderJSON(statusEls.actionsOutput, 'Enter a proposal to submit.');
-    return;
-  }
-  try {
-    const data = await fetchJSON('/upgrades/propose', {
-      method: 'POST',
-      body: JSON.stringify({ proposal: text, rationale: 'Submitted via dashboard' }),
-    });
-    renderJSON(statusEls.actionsOutput, data);
-  } catch (error) {
-    renderJSON(statusEls.actionsOutput, error);
-  }
-}
-
-async function runLearningStep({ silent = false } = {}) {
-  try {
-    const data = await fetchJSON('/learning/step', {
-      method: 'POST',
-      body: JSON.stringify({
-        engagement: Math.random() * 10,
-        success_rate: 0.8 + Math.random() * 0.2,
-        feedback_score: 0.6 + Math.random() * 0.4,
-      }),
-    });
-    const delta = Number(data.delta_score);
-    updateLearningMetrics(data.version, delta, { track: true });
-    if (!silent) {
-      renderJSON(statusEls.actionsOutput, data);
-    }
-    await refreshStatus();
-  } catch (error) {
-    renderJSON(statusEls.actionsOutput, error);
-  }
-}
-
-function drawTrend() {
-  const canvas = statusEls.learningTrend;
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  const ratio = window.devicePixelRatio || 1;
-  const width = (canvas.clientWidth || 360) * ratio;
-  const height = (canvas.clientHeight || 160) * ratio;
-  canvas.width = width;
-  canvas.height = height;
-  ctx.save();
-  ctx.scale(ratio, ratio);
-  ctx.clearRect(0, 0, width / ratio, height / ratio);
-  const drawWidth = width / ratio;
-  const drawHeight = height / ratio;
-  ctx.fillStyle = 'rgba(47, 128, 237, 0.06)';
-  ctx.fillRect(0, 0, drawWidth, drawHeight);
-
-  const values = numericTrend();
-  renderLearningStats(values);
-  if (!values || values.length < 2) {
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '14px "Inter", sans-serif';
-    ctx.fillText('Trend appears after multiple learning steps.', 12, drawHeight / 2);
-    ctx.restore();
-    return;
-  }
-  const padding = 18;
-  const chartWidth = drawWidth - padding * 2;
-  const chartHeight = drawHeight - padding * 2;
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const range = Math.max(0.01, max - min);
-  const toX = (index) => padding + (index / (values.length - 1)) * chartWidth;
-  const toY = (value) => padding + chartHeight - ((value - min) / range) * chartHeight;
-
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i += 1) {
-    const y = padding + (chartHeight / 4) * i;
-    ctx.beginPath();
-    ctx.moveTo(padding, y);
-    ctx.lineTo(padding + chartWidth, y);
-    ctx.stroke();
-  }
-
-  if (min < 0 && max > 0) {
-    const zeroY = toY(0);
-    ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(padding, zeroY);
-    ctx.lineTo(padding + chartWidth, zeroY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  ctx.beginPath();
-  values.forEach((value, index) => {
-    const x = toX(index);
-    const y = toY(value);
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#2f80ed';
-  ctx.stroke();
-
-  const gradient = ctx.createLinearGradient(0, padding, 0, padding + chartHeight);
-  gradient.addColorStop(0, 'rgba(47, 128, 237, 0.25)');
-  gradient.addColorStop(1, 'rgba(47, 128, 237, 0)');
-  ctx.lineTo(padding + chartWidth, padding + chartHeight);
-  ctx.lineTo(padding, padding + chartHeight);
-  ctx.closePath();
-  ctx.fillStyle = gradient;
-  ctx.fill();
-
-  const lastValue = values[values.length - 1];
-  const lastX = toX(values.length - 1);
-  const lastY = toY(lastValue);
-  ctx.fillStyle = '#2f80ed';
-  ctx.beginPath();
-  ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.font = '12px "Inter", sans-serif';
-  ctx.fillText(`${lastValue.toFixed(3)} Δ`, lastX - 24, Math.max(padding + 12, lastY - 10));
-  ctx.fillStyle = '#475569';
-  ctx.font = '12px "Inter", sans-serif';
-  ctx.fillText('Δ score', padding, padding - 4);
-  ctx.fillText('Steps →', padding + chartWidth - 56, padding - 4);
-  ctx.restore();
-}
-
-async function refreshCapsules(params = {}) {
-  const url = new URL('/capsules/list', window.location.origin);
-  if (params.tag) url.searchParams.set('tag', params.tag);
-  if (params.query) url.searchParams.set('q', params.query);
-  try {
-    const data = await fetchJSON(url.toString(), { method: 'GET' });
-    statusEls.capsuleList.innerHTML = '';
-    const capsules = Array.isArray(data.capsules) ? data.capsules : [];
-    if (!capsules.length) {
-      const li = document.createElement('li');
-      li.className = 'empty';
-      li.textContent = 'No capsules saved yet.';
-      statusEls.capsuleList.appendChild(li);
-      return;
-    }
-    capsules.forEach((capsule, index) => {
-      const li = document.createElement('li');
-      li.innerHTML = `
-        <span class="tag">${escapeHtml(capsule.tag || 'untagged')}</span>
-        <div>${escapeHtml(capsule.text || '')}</div>
-        <small>${escapeHtml(capsule.created_at || '')}</small>
-      `;
-      li.addEventListener('click', () => {
-        setCurrentCapsule(capsule, { updateForm: true });
-      });
-      statusEls.capsuleList.appendChild(li);
-      if (index === 0 && !state.currentCapsule) {
-        setCurrentCapsule(capsule);
+    const tag = appState.capsuleFilters.tag;
+    const query = appState.capsuleFilters.query;
+    ui.capsuleTable.body.classList.add('loading');
+    const response = await api.listCapsules({ tag, q: query });
+    appState.capsules = response.map((capsule) => ({ ...capsule, text: capsule.text || '' }));
+    appState.capsules.forEach((capsule) => {
+      if (!appState.capsuleMeta.has(capsule.id)) {
+        appState.capsuleMeta.set(capsule.id, { source: 'operator', status: 'ok', lastRun: null });
       }
     });
+    renderCapsuleTable();
+    updateBadges();
   } catch (error) {
-    statusEls.capsuleList.innerHTML = `<li class="error">${escapeHtml(JSON.stringify(error))}</li>`;
+    toast(`Capsule load failed: ${error.error || error.message || error}`);
+  } finally {
+    ui.capsuleTable.body.classList.remove('loading');
+  }
+}
+
+async function refreshQuickChecks() {
+  try {
+    const result = await api.runQuickChecks();
+    renderQuickChecks(result);
+  } catch (error) {
+    toast(`Quick checks failed: ${error.error || error.message || error}`);
+  }
+}
+
+async function refreshInsights() {
+  try {
+    const result = await api.fetchInsights();
+    renderInsights(result.insights || []);
+  } catch (error) {
+    toast(`Insights failed: ${error.error || error.message || error}`);
+  }
+}
+
+async function refreshLearning() {
+  try {
+    const result = await api.fetchLearningHistory();
+    renderLearning(result.history || []);
+  } catch (error) {
+    toast(`Learning history failed: ${error.error || error.message || error}`);
   }
 }
 
 async function refreshLogs() {
   try {
-    const response = await fetch('/export/logs');
-    const text = await response.text();
-    const trimmed = text.trim();
-    statusEls.logOutput.textContent = trimmed || 'No activity logged yet. Engage actions to generate events.';
+    const text = await api.fetchLogs();
+    renderLogs(text);
   } catch (error) {
-    console.error('Log fetch failed', error);
+    toast(`Log stream failed: ${error.error || error.message || error}`);
   }
 }
 
-function nextResearchTopic() {
-  if (state.researchTopics.length === 0) {
-    return '';
+function processAutoLoops() {
+  Object.values(appState.autoLoops).forEach((interval) => clearInterval(interval));
+  appState.autoLoops = {};
+  if (ui.chips.research.checked) {
+    appState.autoLoops.research = setInterval(() => {
+      if (appState.researchQueue.length) {
+        processResearchItem(appState.researchQueue[0]);
+      }
+    }, 60_000);
   }
-  const topic = state.researchTopics[state.researchIndex % state.researchTopics.length];
-  state.researchIndex = (state.researchIndex + 1) % state.researchTopics.length;
-  return topic;
+  if (ui.chips.insights.checked) {
+    appState.autoLoops.insights = setInterval(() => refreshInsights(), 120_000);
+  }
 }
 
-async function exploreResearch({ silent = false, topic } = {}) {
-  const input = $('#research-query');
-  const query = topic || (input ? input.value.trim() : '');
-  if (topic && input) {
-    input.value = topic;
+async function triggerSave() {
+  const text = buildCapsuleText();
+  if (!text.trim()) {
+    toast('Instruction is required');
+    return;
   }
-  if (!query) {
-    if (!silent) {
-      renderJSON(statusEls.researchOutput, 'Enter a topic to explore.');
-    }
+  const payload = { text, tag: ui.actions.tag.value || 'general' };
+  try {
+    const result = await api.saveCapsule(payload);
+    const meta = {
+      source: ui.actions.source.value || 'operator',
+      status: 'ok',
+      lastRun: null,
+    };
+    appState.capsuleMeta.set(result.id, meta);
+    appState.capsules.unshift(result);
+    renderCapsuleTable();
+    toast('Capsule saved', { runId: result.id });
+    ui.actions.output.innerHTML = `<div class="badge-chip success">SAVED</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+    if (ui.chips.analyze.checked) await triggerAnalyze(text);
+    if (ui.chips.simulate.checked) await triggerSimulation(result);
+    if (ui.chips.learning.checked) await triggerLearning();
+  } catch (error) {
+    toast(`Save failed: ${error.error || error.message || error}`);
+    ui.actions.output.innerHTML = `<div class="badge-chip fail">FAILED</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
+  }
+}
+
+async function triggerAnalyze(textOverride) {
+  const text = textOverride || buildCapsuleText();
+  if (!text.trim()) {
+    toast('Instruction required for analysis');
     return;
   }
   try {
-    const data = await fetchJSON(`/research/explore?q=${encodeURIComponent(query)}`);
-    renderResearch(data);
-    await refreshStatus();
+    const result = await api.analyzeCapsule({ text });
+    ui.actions.output.innerHTML = `<div class="badge-chip success">ANALYZED</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+    toast('Analysis complete', { runId: `analysis-${Date.now()}` });
+    return result;
   } catch (error) {
-    renderJSON(statusEls.researchOutput, error);
+    toast(`Analyze failed: ${error.error || error.message || error}`);
+    ui.actions.output.innerHTML = `<div class="badge-chip warn">NEEDS INPUT</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
+    return null;
   }
 }
 
-async function fetchInsights({ silent = false } = {}) {
-  try {
-    const data = await fetchJSON('/insights/reflect');
-    renderInsights(data);
-    if (!silent) {
-      await refreshStatus();
-    }
-  } catch (error) {
-    renderJSON(statusEls.insightsOutput, error);
-  }
-}
-
-function setAutoAction(key, enabled, intervalMs, handler, optionsFactory) {
-  if (state.autoIntervals[key]) {
-    clearInterval(state.autoIntervals[key]);
-    state.autoIntervals[key] = null;
+async function triggerSimulation(capsule) {
+  const text = capsule?.text || buildCapsuleText();
+  if (!text.trim()) {
+    toast('Instruction required for simulation');
+    return;
   }
   try {
-    localStorage.setItem(`gaia-auto-${key}`, enabled ? 'true' : 'false');
-  } catch (err) {
-    /* ignore storage errors */
-  }
-  if (enabled) {
-    const run = () => {
-      const extra = (typeof optionsFactory === 'function' ? optionsFactory() : {}) || {};
-      Promise.resolve(handler({ silent: true, ...extra })).catch((error) => {
-        console.warn(`Auto action '${key}' failed`, error);
-      });
+    const result = await api.simulateCapsule({ text, capsule_id: capsule?.id });
+    const summary = {
+      title: capsule?.id || 'Ad-hoc simulation',
+      summary: (result.plan || []).join(' → '),
+      impact: `${result.expected_impact?.economy ?? 0} economy / ${result.expected_impact?.environment ?? 0} env`,
+      risk: (result.risks || []).join(', ') || 'low',
+      riskScore: result.risks?.length || 0,
+      cost: '$0.00',
+      timestamp: new Date().toISOString(),
     };
-    run();
-    state.autoIntervals[key] = setInterval(run, intervalMs);
-  }
-  updateAutoStatus();
-}
-
-function restoreAutoToggle(control, key, intervalMs, handler, optionsFactory) {
-  if (!control) return;
-  control.addEventListener('change', () => setAutoAction(key, control.checked, intervalMs, handler, optionsFactory));
-  try {
-    const saved = localStorage.getItem(`gaia-auto-${key}`);
-    if (saved === 'true') {
-      control.checked = true;
-      setAutoAction(key, true, intervalMs, handler, optionsFactory);
+    appState.simulations.push(summary);
+    renderSimulations();
+    toast('Simulation complete', { runId: `sim-${Date.now()}` });
+    ui.actions.output.innerHTML = `<div class="badge-chip success">SIMULATED</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+    if (capsule?.id) {
+      const meta = appState.capsuleMeta.get(capsule.id) || {};
+      meta.lastRun = new Date().toISOString();
+      meta.status = 'ok';
+      appState.capsuleMeta.set(capsule.id, meta);
+      renderCapsuleTable();
     }
-  } catch (err) {
-    /* ignore */
+    return result;
+  } catch (error) {
+    toast(`Simulation failed: ${error.error || error.message || error}`);
+    ui.actions.output.innerHTML = `<div class="badge-chip fail">FAILED</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
+    return null;
   }
-  updateAutoStatus();
 }
 
-function initTabs() {
-  $$('.tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      $$('.tab').forEach((t) => t.classList.remove('active'));
-      $$('.panel').forEach((panel) => panel.classList.remove('active'));
-      tab.classList.add('active');
-      const target = document.getElementById(tab.dataset.target);
-      if (target) target.classList.add('active');
+async function triggerLearning() {
+  try {
+    const result = await api.runLearning({ metrics: { capsules: appState.capsules.length } });
+    toast('Learning step recorded', { runId: result.version });
+    await refreshLearning();
+    ui.actions.output.innerHTML = `<div class="badge-chip success">LEARNING</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+    return result;
+  } catch (error) {
+    toast(`Learning failed: ${error.error || error.message || error}`);
+    ui.actions.output.innerHTML = `<div class="badge-chip warn">NEEDS INPUT</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
+    return null;
+  }
+}
+
+async function triggerUpgrade() {
+  const text = buildCapsuleText();
+  if (!text.trim()) {
+    toast('Instruction required for upgrade proposal');
+    return;
+  }
+  try {
+    const result = await api.proposeUpgrade({ text, metadata: { source: ui.actions.source.value || 'operator' } });
+    toast(result.accepted ? 'Upgrade accepted' : 'Upgrade recorded', { runId: `upgrade-${Date.now()}` });
+    ui.actions.output.innerHTML = `<div class="badge-chip ${result.accepted ? 'success' : 'warn'}">${result.accepted ? 'ACCEPTED' : 'REVIEW'}</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+  } catch (error) {
+    toast(`Upgrade failed: ${error.error || error.message || error}`);
+    ui.actions.output.innerHTML = `<div class="badge-chip fail">FAILED</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
+  }
+}
+
+async function triggerDryRun() {
+  const result = await triggerSimulation({ text: buildCapsuleText() });
+  if (result) {
+    ui.actions.output.innerHTML = `<div class="badge-chip success">DRY-RUN</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+  }
+}
+
+async function processResearchItem(item) {
+  if (!item) return;
+  item.status = 'running';
+  renderResearch();
+  try {
+    const result = await api.runResearch({ query: item.topic });
+    item.status = 'done';
+    item.summary = (result.insights || []).map((entry) => entry.summary).join('\n');
+    appState.researchHistory.push({ topic: item.topic, summary: item.summary, timestamp: new Date().toISOString() });
+    appState.researchQueue = appState.researchQueue.filter((queueItem) => queueItem !== item);
+    renderResearch();
+    toast(`Research complete for ${item.topic}`, { runId: `research-${Date.now()}` });
+  } catch (error) {
+    item.status = 'fail';
+    item.summary = error.error || error.message || 'Failed';
+    renderResearch();
+    toast(`Research failed: ${item.summary}`);
+  }
+}
+
+function pinResearchToCapsule(item) {
+  ui.actions.context.value = `${ui.actions.context.value}\n\nPinned research:\n${item.summary}`.trim();
+  setContext(ui.actions.context.value);
+  toast(`Pinned research from ${item.topic}`);
+}
+
+function storePreset() {
+  const preset = {
+    id: `preset-${Date.now()}`,
+    instruction: ui.actions.instruction.value,
+    context: ui.actions.context.value,
+    tag: ui.actions.tag.value,
+  };
+  appState.presets.push(preset);
+  renderPresets();
+  toast('Preset saved', { runId: preset.id });
+}
+
+function renderPresets() {
+  ui.actions.presetList.innerHTML = '';
+  appState.presets.slice(-10).reverse().forEach((preset) => {
+    const li = document.createElement('li');
+    li.textContent = preset.instruction.slice(0, 60) || 'Untitled preset';
+    li.addEventListener('click', () => {
+      ui.actions.instruction.value = preset.instruction;
+      ui.actions.context.value = preset.context;
+      ui.actions.tag.value = preset.tag;
+      setInstruction(preset.instruction);
+      setContext(preset.context);
     });
+    ui.actions.presetList.appendChild(li);
+  });
+  renderActionKPIs();
+}
+
+function openCommandPalette() {
+  ui.commandPalette.root.setAttribute('aria-hidden', 'false');
+  ui.commandPalette.input.value = '';
+  ui.commandPalette.input.focus();
+  populateCommandResults('');
+}
+
+function closeCommandPalette() {
+  ui.commandPalette.root.setAttribute('aria-hidden', 'true');
+}
+
+function populateCommandResults(term) {
+  const results = [];
+  const query = term.trim().toLowerCase();
+  appState.capsules.forEach((capsule) => {
+    if (!query || capsule.id.toLowerCase().includes(query) || capsule.text.toLowerCase().includes(query)) {
+      results.push({ label: `Capsule ${capsule.id}`, action: () => openCapsuleDrawer(capsule.id) });
+    }
+  });
+  appState.logs.forEach((entry) => {
+    if (!entry.event) return;
+    if (!query || entry.event.toLowerCase().includes(query)) {
+      results.push({ label: `Log • ${entry.event}`, action: () => setActiveSection('section-logs') });
+    }
+  });
+  if (!results.length) {
+    ui.commandPalette.results.innerHTML = '<div class="command-item">No results</div>';
+    return;
+  }
+  ui.commandPalette.results.innerHTML = '';
+  results.slice(0, 20).forEach((result, index) => {
+    const item = document.createElement('div');
+    item.className = 'command-item';
+    item.textContent = result.label;
+    item.dataset.index = index;
+    item.tabIndex = 0;
+    item.addEventListener('click', () => {
+      result.action();
+      closeCommandPalette();
+    });
+    ui.commandPalette.results.appendChild(item);
   });
 }
 
-function initDarkMode() {
-  const toggle = $('#dark-mode-toggle');
-  if (!toggle) return;
-  const saved = localStorage.getItem('gaia-dark-mode');
-  if (saved === 'true') {
-    document.body.classList.add('dark-mode');
-    toggle.checked = true;
-  }
-  toggle.addEventListener('change', () => {
-    document.body.classList.toggle('dark-mode', toggle.checked);
-    localStorage.setItem('gaia-dark-mode', toggle.checked ? 'true' : 'false');
+function setActiveSection(sectionId) {
+  appState.activeSection = sectionId;
+  ui.navItems.forEach((item) => {
+    const target = item.dataset.target;
+    const isActive = target === sectionId;
+    item.classList.toggle('active', isActive);
+    const section = document.getElementById(target);
+    if (section) section.classList.toggle('active', isActive);
   });
 }
 
 function initEvents() {
-  $('#refresh-status').addEventListener('click', refreshStatus);
-  $('#btn-save').addEventListener('click', saveCapsule);
-  $('#btn-analyze').addEventListener('click', () => analyzeCapsule());
-  $('#btn-simulate').addEventListener('click', () => simulateCapsule());
-  $('#btn-upgrade').addEventListener('click', proposeUpgrade);
-  $('#btn-learning').addEventListener('click', () => runLearningStep());
-  const researchButton = $('#btn-research');
-  if (researchButton) {
-    researchButton.addEventListener('click', () => exploreResearch());
-  }
-  $('#btn-filter').addEventListener('click', () => {
-    refreshCapsules({
-      tag: $('#filter-tag').value.trim(),
-      query: $('#filter-query').value.trim(),
-    });
+  ui.actions.instruction.addEventListener('input', (event) => setInstruction(event.target.value));
+  ui.actions.context.addEventListener('input', (event) => setContext(event.target.value));
+  ui.capsuleTable.filterQuery.addEventListener('input', (event) => {
+    appState.capsuleFilters.query = event.target.value;
+    refreshCapsules();
   });
-  $('#btn-refresh-capsules').addEventListener('click', () => refreshCapsules());
-  $('#btn-download-logs').addEventListener('click', () => {
-    window.open('/export/logs', '_blank');
+  ui.capsuleTable.filterTag.addEventListener('input', (event) => {
+    appState.capsuleFilters.tag = event.target.value;
+    refreshCapsules();
   });
-  $$('.export-btn').forEach((button) => {
+  ui.capsuleTable.filterStatus.addEventListener('change', (event) => {
+    appState.capsuleFilters.status = event.target.value;
+    renderCapsuleTable();
+  });
+  ui.capsuleTable.quickFilters.forEach((button) => {
     button.addEventListener('click', () => {
-      window.open(`/export/capsules?fmt=${button.dataset.fmt}`, '_blank');
+      const filter = button.dataset.filter;
+      if (filter === 'errors') appState.capsuleFilters.status = 'error';
+      if (filter === 'warnings') appState.capsuleFilters.status = 'warn';
+      if (filter === 'recent') appState.capsulePage = 1;
+      if (filter === 'mine') appState.capsuleFilters.tag = ui.actions.tag.value || '';
+      if (filter === 'recent') {
+        appState.capsules.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      }
+      if (filter === 'errors') ui.capsuleTable.filterStatus.value = 'error';
+      if (filter === 'warnings') ui.capsuleTable.filterStatus.value = 'warn';
+      if (filter === 'mine') ui.capsuleTable.filterTag.value = ui.actions.tag.value;
+      renderCapsuleTable();
     });
   });
-
-  restoreAutoToggle(autoControls.analyze, 'analyze', 20000, analyzeCapsule);
-  restoreAutoToggle(autoControls.simulate, 'simulate', 30000, simulateCapsule);
-  restoreAutoToggle(autoControls.learning, 'learning', 45000, runLearningStep);
-  restoreAutoToggle(autoControls.research, 'research', 60000, exploreResearch, () => ({ topic: nextResearchTopic() }));
-  restoreAutoToggle(autoControls.insights, 'insights', 90000, fetchInsights);
+  ui.capsuleTable.prev.addEventListener('click', () => {
+    appState.capsulePage = Math.max(1, appState.capsulePage - 1);
+    renderCapsuleTable();
+  });
+  ui.capsuleTable.next.addEventListener('click', () => {
+    const rows = filteredCapsules();
+    const pageCount = Math.max(1, Math.ceil(rows.length / appState.capsulePageSize));
+    appState.capsulePage = Math.min(pageCount, appState.capsulePage + 1);
+    renderCapsuleTable();
+  });
+  ui.capsuleTable.selectAll.addEventListener('change', (event) => {
+    if (event.target.checked) {
+      filteredCapsules().forEach((capsule) => appState.capsuleSelection.add(capsule.id));
+    } else {
+      appState.capsuleSelection.clear();
+    }
+    renderCapsuleTable();
+  });
+  ui.capsuleTable.drawerClose.addEventListener('click', closeCapsuleDrawer);
+  ui.research.form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const topic = ui.research.input.value.trim();
+    if (!topic) return;
+    appState.researchQueue.push({ topic, status: 'queued', summary: '' });
+    ui.research.input.value = '';
+    renderResearch();
+    if (!ui.chips.research.checked) processResearchItem(appState.researchQueue[0]);
+  });
+  ui.commandPalette.input.addEventListener('input', (event) => populateCommandResults(event.target.value));
+  ui.commandPalette.close.addEventListener('click', closeCommandPalette);
+  ui.primaryActions.save.addEventListener('click', triggerSave);
+  ui.primaryActions.analyze.addEventListener('click', () => triggerAnalyze());
+  ui.primaryActions.simulate.addEventListener('click', () => triggerSimulation());
+  ui.primaryActions.learning.addEventListener('click', () => triggerLearning());
+  ui.primaryActions.upgrade.addEventListener('click', () => triggerUpgrade());
+  ui.primaryActions.dryrun.addEventListener('click', () => triggerDryRun());
+  $('#preset-save').addEventListener('click', storePreset);
+  Object.values(ui.chips).forEach((chip) => {
+    if (!chip) return;
+    chip.addEventListener('change', () => {
+      renderActionKPIs();
+      processAutoLoops();
+    });
+  });
+  ui.refreshButton.addEventListener('click', async () => {
+    await refreshStatus();
+    await refreshCapsules();
+  });
+  ui.autoRefresh.addEventListener('change', (event) => {
+    appState.autoRefresh = event.target.checked;
+  });
+  ui.quickChecks.toggle.addEventListener('click', () => {
+    const expanded = ui.quickChecks.toggle.getAttribute('aria-expanded') === 'true';
+    ui.quickChecks.toggle.setAttribute('aria-expanded', String(!expanded));
+    ui.quickChecks.details.hidden = expanded;
+  });
+  ui.quickChecks.rerun.addEventListener('click', refreshQuickChecks);
+  ui.killSwitch.addEventListener('click', async () => {
+    const token = prompt('Enter admin token to engage kill switch');
+    if (!token) return;
+    try {
+      const result = await api.killSwitch(token);
+      toast(`Kill switch ${result.status}`);
+      await refreshStatus();
+    } catch (error) {
+      toast(`Kill switch failed: ${error.error || error.message || error}`);
+    }
+  });
+  ui.exports.buttons.forEach((button) => {
+    button.addEventListener('click', async () => {
+      const format = button.dataset.format;
+      try {
+        const blob = await api.exportCapsules(format);
+        recordExport(format, `${(blob.size / 1024).toFixed(1)} KB`);
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `capsules.${format}`;
+        link.click();
+        toast(`Exported ${format.toUpperCase()} capsules`);
+      } catch (error) {
+        toast(`Export failed: ${error.error || error.message || error}`);
+      }
+    });
+  });
+  const importBtn = $('#capsule-import');
+  if (importBtn) {
+    importBtn.addEventListener('click', () => toast('Import coming soon'));
+  }
+  ui.learning.ranges.forEach((button) => {
+    button.addEventListener('click', () => {
+      ui.learning.ranges.forEach((btn) => btn.classList.toggle('active', btn === button));
+      appState.learningRange = Number(button.dataset.range || 30);
+      drawLearningChart();
+    });
+  });
+  ui.navItems.forEach((item) => item.addEventListener('click', () => setActiveSection(item.dataset.target)));
+  if (ui.logs.level) {
+    ui.logs.level.addEventListener('change', applyLogFilter);
+  }
+  if (ui.helpButton) {
+    ui.helpButton.addEventListener('click', () => toast('See README.md for operator handbook.'));
+  }
+  document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      openCommandPalette();
+    }
+    if (event.key === '/' && !['INPUT', 'TEXTAREA'].includes(event.target.tagName)) {
+      event.preventDefault();
+      const activeSearch = $('#' + appState.activeSection + ' input[type="search"]');
+      if (activeSearch) activeSearch.focus();
+    }
+    if (event.key === '?' && !['INPUT', 'TEXTAREA'].includes(event.target.tagName)) {
+      event.preventDefault();
+      toast('Help center coming soon');
+    }
+    if (event.key === 'Escape' && ui.commandPalette.root.getAttribute('aria-hidden') === 'false') {
+      closeCommandPalette();
+    }
+    if (event.key === 'Escape' && ui.capsuleTable.drawer.getAttribute('aria-hidden') === 'false') {
+      closeCapsuleDrawer();
+    }
+  });
+  let gPress = 0;
+  document.addEventListener('keydown', (event) => {
+    if (event.key.toLowerCase() === 'g') {
+      const now = Date.now();
+      if (now - gPress < 300) {
+        setActiveSection('section-actions');
+        gPress = 0;
+      } else {
+        gPress = now;
+      }
+    }
+  });
 }
 
-async function boot() {
-  initTabs();
-  initDarkMode();
+async function bootstrap() {
   initEvents();
-  updateAutoStatus();
+  processAutoLoops();
   await refreshStatus();
-  await fetchLearningHistory();
   await refreshCapsules();
+  await refreshQuickChecks();
+  await refreshInsights();
+  await refreshLearning();
   await refreshLogs();
-  await fetchInsights({ silent: true });
-  renderLearningStats();
-  drawTrend();
-  setInterval(refreshStatus, 7000);
-  setInterval(refreshLogs, 10000);
-  setInterval(() => refreshCapsules(), 15000);
+  renderResearch();
+  renderSimulations();
+  renderExports();
+  renderPresets();
+  setInstruction('');
+  setContext('');
+  if (appState.autoRefresh) {
+    setInterval(async () => {
+      if (!appState.autoRefresh) return;
+      await refreshStatus();
+    }, 15_000);
+  }
 }
 
-document.addEventListener('DOMContentLoaded', boot);
+window.GaiaDashboard = {
+  getStatus: api.getStatus,
+  runQuickChecks: api.runQuickChecks,
+  listCapsules(params = {}) {
+    const page = params.page || 1;
+    const pageSize = params.pageSize || appState.capsulePageSize;
+    const items = appState.capsules.filter((capsule) => {
+      if (params.tag && capsule.tag !== params.tag) return false;
+      if (params.q && !capsule.text.toLowerCase().includes(params.q.toLowerCase())) return false;
+      if (params.status) {
+        const meta = appState.capsuleMeta.get(capsule.id);
+        if (!meta || meta.status !== params.status) return false;
+      }
+      return true;
+    });
+    const offset = (page - 1) * pageSize;
+    return items.slice(offset, offset + pageSize);
+  },
+  getCapsule(id) {
+    return appState.capsules.find((capsule) => capsule.id === id);
+  },
+  runCapsule(id, options = {}) {
+    const capsule = appState.capsules.find((item) => item.id === id);
+    if (!capsule) return Promise.reject(new Error('Capsule not found'));
+    if (options.dryRun) {
+      return api.simulateCapsule({ text: capsule.text, capsule_id: capsule.id });
+    }
+    return triggerSimulation(capsule);
+  },
+  listSimulations() {
+    return [...appState.simulations];
+  },
+  startSimulation: api.simulateCapsule,
+  listInsights(params = {}) {
+    const severity = params.severity;
+    if (!severity) return [...appState.insights];
+    return appState.insights.filter((item) => item.severity === severity);
+  },
+  listLogs(params = {}) {
+    const level = params.level || 'all';
+    if (level === 'all') return [...(appState.logsRaw || [])];
+    return (appState.logsRaw || []).filter((entry) => {
+      const event = String(entry.event || entry.level || '').toLowerCase();
+      if (level === 'error') return event.includes('error') || event.includes('fail');
+      if (level === 'warn') return event.includes('warn');
+      return true;
+    });
+  },
+  exportData(params = {}) {
+    const type = params.type || 'json';
+    return api.exportCapsules(type);
+  },
+};
+
+document.addEventListener('DOMContentLoaded', bootstrap);

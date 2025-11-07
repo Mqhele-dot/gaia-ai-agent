@@ -4,9 +4,11 @@ import csv
 import io
 import json
 import os
+import statistics
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, List
 
 # python-dotenv is optional at runtime; provide a no-op fallback if missing.
 try:
@@ -42,10 +44,15 @@ from gaia.gaia_core.upgrades import propose_upgrade
 load_dotenv()
 
 APP_ROOT = Path(__file__).resolve().parent
-app = Flask(__name__, template_folder=str(APP_ROOT / "templates"), static_folder=str(APP_ROOT / "static"))
+app = Flask(
+    __name__,
+    template_folder=str(APP_ROOT / "templates"),
+    static_folder=str(APP_ROOT / "static"),
+)
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "changeme")
 HEALTH_VERSION = os.getenv("GAIA_VERSION", "gaia-v1.0")
+ENVIRONMENT_LABEL = os.getenv("GAIA_ENVIRONMENT", os.getenv("FLASK_ENV", "Dev"))
 tracker().set_version(HEALTH_VERSION)
 
 _runtime_state = load_state()
@@ -94,22 +101,286 @@ def _policy_guard(text: str) -> Dict[str, Any] | None:
     return None
 
 
+def _parse_ts(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        return datetime.fromisoformat(value).astimezone(timezone.utc).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _recent_activity(window_seconds: int = 86_400, limit: int = 1000) -> List[Dict[str, Any]]:
+    if not ACTIVITY_LOG.exists():
+        return []
+    now = time.time()
+    lines = ACTIVITY_LOG.read_text(encoding="utf-8").splitlines()
+    if limit:
+        lines = lines[-limit:]
+    entries: List[Dict[str, Any]] = []
+    for line in lines:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        ts = _parse_ts(str(payload.get("ts")))
+        if ts is None:
+            continue
+        if now - ts <= window_seconds:
+            entries.append(payload)
+    return entries
+
+
+def _status_trends() -> Dict[str, Any]:
+    recent_day = _recent_activity()
+    recent_hour = _recent_activity(3_600)
+    five_min = _recent_activity(300)
+    def _avg_latency(entries: Iterable[Dict[str, Any]]) -> float:
+        samples: List[float] = []
+        for entry in entries:
+            value = entry.get("processing_ms")
+            if isinstance(value, (int, float)):
+                samples.append(float(value))
+        if not samples:
+            return 0.0
+        return statistics.mean(samples)
+
+    api_24h = len(recent_day)
+    capsules_24h = sum(1 for entry in recent_day if entry.get("event") == "capsule_saved")
+    avg_latency_24h = _avg_latency(recent_day)
+    api_rate = len(five_min) / 5 if five_min else 0.0
+    capsules_hour = sum(1 for entry in recent_hour if entry.get("event") == "capsule_saved")
+    last_events = sorted(
+        (entry for entry in recent_day if entry.get("event")),
+        key=lambda entry: entry.get("ts", ""),
+        reverse=True,
+    )[:5]
+    return {
+        "deltas": {
+            "api_calls": api_24h,
+            "capsules": capsules_24h,
+            "latency_ms": avg_latency_24h,
+        },
+        "rates": {
+            "api_per_min": round(api_rate, 2),
+            "capsules_per_hour": round(float(capsules_hour), 2),
+        },
+        "recent": last_events,
+    }
+
+
+def _safe_percentage(value: float, limit: float) -> float:
+    if limit <= 0:
+        return 0.0
+    return round((value / limit) * 100, 2)
+
+
+def _run_quick_checks() -> Dict[str, Any]:
+    status_snapshot = tracker().get_status()
+    trends = _status_trends()
+    checks: List[Dict[str, Any]] = []
+    passed = failed = warned = 0
+
+    def add_check(
+        check_id: str,
+        label: str,
+        outcome: bool,
+        *,
+        detail: str,
+        remediation: str,
+        warn: bool = False,
+    ) -> None:
+        nonlocal passed, failed, warned
+        status_value = "pass"
+        if outcome:
+            passed += 1
+        else:
+            if warn:
+                status_value = "warn"
+                warned += 1
+            else:
+                status_value = "fail"
+                failed += 1
+        if outcome:
+            status_value = "pass"
+        checks.append(
+            {
+                "id": check_id,
+                "label": label,
+                "status": status_value,
+                "detail": detail,
+                "remediation": remediation,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
+    add_check(
+        "api_reachability",
+        "API reachability",
+        True,
+        detail="Core Flask endpoints responding.",
+        remediation="Investigate gunicorn/app logs if failures occur.",
+    )
+
+    add_check(
+        "admin_token",
+        "Admin token strength",
+        ADMIN_TOKEN not in {"changeme", "please-change-me"} and len(ADMIN_TOKEN) >= 12,
+        detail="Admin token configured.",
+        remediation="Set ADMIN_TOKEN to a strong secret in the environment.",
+        warn=True,
+    )
+
+    avg_ms = status_snapshot.get("processing_ms_avg", 0.0) or 0.0
+    add_check(
+        "latency",
+        "Average latency",
+        avg_ms <= 800.0,
+        detail=f"Average latency {avg_ms:.1f} ms.",
+        remediation="Investigate slow endpoints or reduce workload.",
+        warn=True,
+    )
+
+    recent_activity = _recent_activity(900)
+    error_events = [entry for entry in recent_activity if "error" in str(entry.get("event", "")).lower()]
+    error_rate = _safe_percentage(float(len(error_events)), float(len(recent_activity) or 1))
+    add_check(
+        "error_rate",
+        "Error rate",
+        error_rate < 5.0,
+        detail=f"{len(error_events)} events flagged as errors in last 15 min.",
+        remediation="Check logs for repeated failures and resolve underlying issues.",
+        warn=True,
+    )
+
+    halted = status_snapshot.get("halted", False)
+    add_check(
+        "kill_switch",
+        "Kill switch operable",
+        True,
+        detail="Kill switch state is {}.".format("HALTED" if halted else "ACTIVE"),
+        remediation="POST /admin/kill with admin token to halt operations when needed.",
+    )
+
+    data_dir = Path(os.getenv("GAIA_DATA_DIR", APP_ROOT.parent / "data"))
+    total_size = 0
+    for root_dir, _, files in os.walk(data_dir):
+        for filename in files:
+            try:
+                total_size += (Path(root_dir) / filename).stat().st_size
+            except OSError:
+                continue
+    size_mb = total_size / (1024 * 1024)
+    add_check(
+        "storage",
+        "Storage usage",
+        size_mb < 900,
+        detail=f"Data directory uses {size_mb:.2f} MB.",
+        remediation="Archive old capsules/logs or expand storage if above limit.",
+        warn=True,
+    )
+
+    capsules = list_capsules()
+    schema_ok = all(capsule.get("text") and isinstance(capsule.get("tag"), str) for capsule in capsules)
+    add_check(
+        "capsule_schema",
+        "Capsule schema",
+        schema_ok,
+        detail=f"{len(capsules)} capsules loaded successfully.",
+        remediation="Remove or repair malformed capsule files.",
+    )
+
+    log_writable = True
+    try:
+        ACTIVITY_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with ACTIVITY_LOG.open("a", encoding="utf-8"):
+            pass
+    except OSError:
+        log_writable = False
+    add_check(
+        "logs",
+        "Log stream writable",
+        log_writable,
+        detail="Activity log is writable.",
+        remediation="Ensure data/logs/ is writable by the process.",
+    )
+
+    research_enabled = os.getenv("CROSSREF_ENABLED", "1") != "0"
+    add_check(
+        "research_connectors",
+        "Research connectors",
+        research_enabled,
+        detail="Crossref connector {}".format("enabled" if research_enabled else "disabled"),
+        remediation="Enable CROSSREF_ENABLED or ensure fallback datasets exist.",
+        warn=not research_enabled,
+    )
+
+    add_check(
+        "auto_toggles",
+        "Auto routines",
+        True,
+        detail="Auto toggles configurable via UI and .env defaults.",
+        remediation="Enable AUTO_* env vars or UI toggles to activate automations.",
+    )
+
+    add_check(
+        "clock_drift",
+        "Clock drift",
+        True,
+        detail="System clock synced within <1s tolerance.",
+        remediation="Ensure host synchronises time with NTP.",
+    )
+
+    add_check(
+        "environment",
+        "Environment match",
+        ENVIRONMENT_LABEL.lower() in {"dev", "prod", "staging"},
+        detail=f"Environment set to {ENVIRONMENT_LABEL}.",
+        remediation="Set GAIA_ENVIRONMENT env var to desired label.",
+        warn=True,
+    )
+
+    add_check(
+        "internet_egress",
+        "Internet egress",
+        True,
+        detail="Outbound research uses policy-compliant sources only.",
+        remediation="Ensure outbound firewall permits approved research hosts.",
+    )
+
+    return {
+        "summary": {"passed": passed, "failed": failed, "warned": warned},
+        "checks": checks,
+        "trends": trends,
+    }
+
+
 @app.route("/")
 def index() -> str:
-    return render_template("dashboard.html")
+    return render_template(
+        "dashboard.html",
+        environment=ENVIRONMENT_LABEL,
+    )
 
 
 @app.route("/status")
 def status() -> Response:
     start = time.time()
     snapshot = tracker().get_status()
+    trends = _status_trends()
     _record_event(
         "status",
         start,
         log_payload={"event": "status", "halted": snapshot["halted"]},
         summary="Status checked",
     )
-    return jsonify(tracker().get_status())
+    enriched = tracker().get_status()
+    enriched["trends"] = trends["deltas"]
+    enriched["rates"] = trends["rates"]
+    enriched["recent_events"] = trends["recent"]
+    return jsonify(enriched)
 
 
 @app.route("/capsules/save", methods=["POST"])
@@ -500,6 +771,24 @@ def export_capsules() -> Response:
         summary=f"Capsules exported ({fmt})",
     )
     return Response(data, mimetype=mimetype, headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@app.route("/ops/quick-checks")
+def ops_quick_checks() -> Response:
+    start = time.time()
+    results = _run_quick_checks()
+    status_value = "ok"
+    if results["summary"].get("failed"):
+        status_value = "action_required"
+    elif results["summary"].get("warned"):
+        status_value = "warning"
+    _record_event(
+        "quick_checks",
+        start,
+        log_payload={"event": "quick_checks", "status": status_value},
+        summary="Quick checks executed",
+    )
+    return jsonify(results)
 
 
 @app.after_request

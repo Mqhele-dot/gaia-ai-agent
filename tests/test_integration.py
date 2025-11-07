@@ -151,3 +151,13 @@ def test_research_explore_route(client, monkeypatch):
     missing = client.get("/research/explore")
     assert missing.status_code == 400
     assert missing.get_json()["error"]
+
+
+def test_quick_checks_endpoint(client):
+    response = client.get("/ops/quick-checks")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert "summary" in payload
+    assert "checks" in payload
+    assert payload["summary"]["passed"] >= 0
+    assert any(check["id"] == "api_reachability" for check in payload["checks"])

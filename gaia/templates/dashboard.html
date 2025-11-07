@@ -3,188 +3,395 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gaia Control Dashboard</title>
+  <title>Gaia Control Surface</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
-<body class="light-mode">
-  <header class="top-bar">
-    <div class="branding">
-      <h1>Gaia</h1>
-      <p class="subtitle">Ethical, transparent, self-improving assistant</p>
+<body class="app" data-environment="{{ environment | default('Dev') }}">
+  <div id="toast-root" aria-live="polite" aria-atomic="true" class="toast-root"></div>
+  <div id="search-modal" class="command-palette" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="command-surface">
+      <div class="command-header">
+        <span class="command-title">Quick search</span>
+        <button class="icon-button" id="command-close" aria-label="Close search">×</button>
+      </div>
+      <input id="command-input" type="search" placeholder="Search capsules, runs, logs, settings" aria-label="Search" />
+      <div id="command-results" class="command-results" role="listbox"></div>
+      <footer class="command-footer">Tip: use Ctrl+K to open, ↑/↓ to navigate, Enter to jump.</footer>
     </div>
-    <div class="controls">
-      <label class="toggle">
-        <input type="checkbox" id="dark-mode-toggle" />
-        <span>Dark mode</span>
-      </label>
-      <button id="refresh-status" class="secondary">Refresh Status</button>
+  </div>
+
+  <header class="status-bar" aria-label="Runtime status">
+    <div class="status-left">
+      <div class="brand-stack">
+        <span class="product-name">Gaia</span>
+        <span class="environment" id="status-environment">{{ environment | default('Dev') }}</span>
+      </div>
+    </div>
+    <div class="status-center" role="group" aria-label="Key metrics">
+      <div class="status-metric" data-metric="uptime">
+        <span class="metric-label">Uptime</span>
+        <span class="metric-value" id="status-uptime">0s</span>
+        <span class="metric-trend" id="trend-uptime">—</span>
+      </div>
+      <div class="status-metric" data-metric="version">
+        <span class="metric-label">Version</span>
+        <span class="metric-value" id="status-version">-</span>
+        <span class="metric-trend" id="trend-version">—</span>
+      </div>
+      <div class="status-metric" data-metric="api">
+        <span class="metric-label">API calls/min</span>
+        <span class="metric-value" id="status-api-rate">0</span>
+        <span class="metric-trend" id="trend-api">Δ0</span>
+      </div>
+      <div class="status-metric" data-metric="capsules">
+        <span class="metric-label">Capsules</span>
+        <span class="metric-value" id="status-capsules">0</span>
+        <span class="metric-trend" id="trend-capsules">Δ0</span>
+      </div>
+      <div class="status-metric" data-metric="latency">
+        <span class="metric-label">Avg latency</span>
+        <span class="metric-value" id="status-avg">0 ms</span>
+        <span class="metric-trend" id="trend-latency">Δ0</span>
+      </div>
+      <div class="status-metric" data-metric="last">
+        <span class="metric-label">Last action</span>
+        <span class="metric-value" id="status-last">Awaiting activity</span>
+        <span class="metric-trend" id="status-last-delta">—</span>
+      </div>
+    </div>
+    <div class="status-right">
+      <button id="open-help" class="icon-button" aria-label="Open help" title="Help (?)">?</button>
+      <button id="kill-switch" class="kill-button" aria-label="Engage kill switch">Kill switch</button>
+      <div class="status-toggle">
+        <label class="switch" title="Auto refresh">
+          <input type="checkbox" id="auto-refresh" checked />
+          <span class="slider"></span>
+          <span class="switch-label">Auto</span>
+        </label>
+        <button id="refresh-status" class="ghost">Refresh</button>
+      </div>
     </div>
   </header>
 
-  <section id="status-bar" class="status-bar">
-    <div class="status-item"><span>Uptime</span><strong id="status-uptime">0s</strong></div>
-    <div class="status-item"><span>Version</span><strong id="status-version">-</strong></div>
-    <div class="status-item"><span>API Calls</span><strong id="status-calls">0</strong></div>
-    <div class="status-item"><span>Capsules</span><strong id="status-capsules">0</strong></div>
-    <div class="status-item"><span>Avg ms</span><strong id="status-avg">0</strong></div>
-    <div class="status-item status-last">
-      <span>Last Action</span>
-      <div class="last-action-pill">
-        <span id="status-last-icon" class="last-action-icon" aria-hidden="true">•</span>
-        <strong id="status-last">-</strong>
+  <section id="quick-checks" class="quick-checks" aria-label="Quick checks banner">
+    <div class="quick-checks-summary">
+      <div class="quick-checks-heading">
+        <h2>Quick Checks</h2>
+        <div class="quick-check-pills" id="quick-check-pills"></div>
+      </div>
+      <div class="quick-check-actions">
+        <button id="quick-checks-rerun" class="ghost">Re-run checks</button>
+        <button id="quick-checks-expand" class="icon-button" aria-expanded="false" aria-controls="quick-check-details">▾</button>
       </div>
     </div>
+    <div id="quick-check-details" class="quick-check-details" hidden>
+      <div class="quick-check-content" id="quick-check-content"></div>
+    </div>
   </section>
-  <section id="halted-banner" class="halted hidden">HALTED BY ADMIN</section>
 
-  <main class="layout">
-    <nav class="tabs">
-      <button class="tab active" data-target="panel-actions">Agent Actions</button>
-      <button class="tab" data-target="panel-capsules">Capsules</button>
-      <button class="tab" data-target="panel-simulation">Simulation</button>
-      <button class="tab" data-target="panel-research">Research</button>
-      <button class="tab" data-target="panel-insights">Insights</button>
-      <button class="tab" data-target="panel-learning">Learning</button>
-      <button class="tab" data-target="panel-logs">System Logs</button>
-      <button class="tab" data-target="panel-exports">Exports</button>
+  <div id="halted-banner" class="halted-banner" role="status" aria-live="assertive" hidden>
+    HALTED — risky operations disabled until reset.
+  </div>
+
+  <div class="primary-action-bar" id="primary-action-bar" role="toolbar" aria-label="Primary actions">
+    <div class="action-left">
+      <button type="button" id="action-save" class="primary" data-action="save">Save capsule</button>
+      <button type="button" id="action-analyze" data-action="analyze">Analyze</button>
+      <button type="button" id="action-simulate" data-action="simulate">Simulate</button>
+      <button type="button" id="action-learning" data-action="learning">Learning step</button>
+      <button type="button" id="action-upgrade" data-action="upgrade">Propose upgrade</button>
+      <button type="button" id="action-dryrun" data-action="dryrun">Dry-run plan</button>
+    </div>
+    <div class="action-right">
+      <label class="chip-toggle">
+        <input type="checkbox" id="chip-auto-analyze" />
+        <span>Auto Analyze</span>
+      </label>
+      <label class="chip-toggle">
+        <input type="checkbox" id="chip-auto-simulate" />
+        <span>Auto Simulate</span>
+      </label>
+      <label class="chip-toggle">
+        <input type="checkbox" id="chip-auto-learning" />
+        <span>Auto Learning</span>
+      </label>
+      <label class="chip-toggle">
+        <input type="checkbox" id="chip-auto-research" />
+        <span>Auto Explore</span>
+      </label>
+      <label class="chip-toggle">
+        <input type="checkbox" id="chip-auto-insights" />
+        <span>Auto Reflect</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="app-shell">
+    <nav class="nav-rail" aria-label="Sections">
+      <button class="nav-item active" data-target="section-actions" title="Agent Actions" aria-controls="section-actions">
+        <span class="icon">🧭</span>
+        <span class="label">Agent</span>
+        <span class="badge" id="badge-actions">•</span>
+      </button>
+      <button class="nav-item" data-target="section-capsules" title="Capsules" aria-controls="section-capsules">
+        <span class="icon">📚</span>
+        <span class="label">Capsules</span>
+        <span class="badge" id="badge-capsules">0</span>
+      </button>
+      <button class="nav-item" data-target="section-simulation" title="Simulation" aria-controls="section-simulation">
+        <span class="icon">🧪</span>
+        <span class="label">Simulation</span>
+        <span class="badge" id="badge-simulation">0</span>
+      </button>
+      <button class="nav-item" data-target="section-research" title="Research" aria-controls="section-research">
+        <span class="icon">🔭</span>
+        <span class="label">Research</span>
+        <span class="badge" id="badge-research">0</span>
+      </button>
+      <button class="nav-item" data-target="section-insights" title="Insights" aria-controls="section-insights">
+        <span class="icon">💡</span>
+        <span class="label">Insights</span>
+        <span class="badge" id="badge-insights">0</span>
+      </button>
+      <button class="nav-item" data-target="section-learning" title="Learning" aria-controls="section-learning">
+        <span class="icon">📈</span>
+        <span class="label">Learning</span>
+        <span class="badge" id="badge-learning">0</span>
+      </button>
+      <button class="nav-item" data-target="section-logs" title="System Logs" aria-controls="section-logs">
+        <span class="icon">📋</span>
+        <span class="label">Logs</span>
+        <span class="badge" id="badge-logs">0</span>
+      </button>
+      <button class="nav-item" data-target="section-exports" title="Exports" aria-controls="section-exports">
+        <span class="icon">⬇️</span>
+        <span class="label">Exports</span>
+        <span class="badge" id="badge-exports">0</span>
+      </button>
     </nav>
 
-    <section id="panel-actions" class="panel active">
-      <h2>Agent Actions</h2>
-      <form id="capsule-form">
-        <label>Capsule Text<textarea id="capsule-text" rows="6" required></textarea></label>
-        <label>Tag<input id="capsule-tag" type="text" placeholder="energy" /></label>
-        <div class="auto-actions">
-          <label class="toggle">
-            <input type="checkbox" id="auto-analyze" />
-            <span>Auto Analyze</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="auto-simulate" />
-            <span>Auto Simulate</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="auto-learning" />
-            <span>Auto Learning</span>
-          </label>
-          <span class="auto-note" id="auto-status">Manual mode</span>
+    <main class="content" id="main-content">
+      <section id="section-actions" class="content-section active" aria-labelledby="actions-title">
+        <header class="section-header">
+          <div>
+            <h2 id="actions-title">Agent actions</h2>
+            <a href="#" class="help-link" data-help="actions">How it works</a>
+          </div>
+          <div class="kpi-strip" id="actions-kpis"></div>
+        </header>
+        <div class="section-body">
+          <form id="capsule-form" novalidate>
+            <div class="field-group">
+              <label for="capsule-instruction">Instruction</label>
+              <textarea id="capsule-instruction" rows="6" placeholder="Describe the improvement Gaia should explore" required></textarea>
+              <div class="field-meta" id="instruction-counter">0 chars • 0 tokens</div>
+            </div>
+            <div class="field-group optional">
+              <label for="capsule-context">Context <span class="hint">Optional</span></label>
+              <textarea id="capsule-context" rows="4" placeholder="Add supporting details, links, or parameters"></textarea>
+              <div class="field-meta" id="context-counter">0 chars • 0 tokens</div>
+            </div>
+            <div class="field-row">
+              <label for="capsule-tag">Tag</label>
+              <input id="capsule-tag" type="text" placeholder="energy" />
+              <label for="capsule-source">Source</label>
+              <input id="capsule-source" type="text" placeholder="operator" />
+            </div>
+            <div class="parameter-chips" role="group" aria-label="Capsule parameters">
+              <button type="button" class="chip" data-schema="baseline">Baseline</button>
+              <button type="button" class="chip" data-schema="experiment">Experiment</button>
+              <button type="button" class="chip" data-schema="regression">Regression</button>
+            </div>
+          </form>
+          <aside class="preset-panel" aria-label="Presets">
+            <div class="preset-header">
+              <h3>Presets</h3>
+              <button id="preset-save" class="ghost">Save current</button>
+            </div>
+            <ul id="preset-list" class="preset-list"></ul>
+          </aside>
         </div>
-        <div class="button-row">
-          <button type="button" id="btn-save" class="primary">Save Capsule</button>
-          <button type="button" id="btn-analyze">Analyze</button>
-          <button type="button" id="btn-simulate">Simulate</button>
-          <button type="button" id="btn-upgrade">Propose Upgrade</button>
-          <button type="button" id="btn-learning">Run Learning Step</button>
+        <div id="actions-output" class="section-output" aria-live="polite"></div>
+      </section>
+
+      <section id="section-capsules" class="content-section" aria-labelledby="capsules-title">
+        <header class="section-header">
+          <div>
+            <h2 id="capsules-title">Capsules</h2>
+            <a href="#" class="help-link" data-help="capsules">How exports work</a>
+          </div>
+          <div class="kpi-strip" id="capsules-kpis"></div>
+        </header>
+        <div class="section-toolbar">
+          <input type="search" id="filter-query" placeholder="Search text" aria-label="Search capsules" />
+          <input type="text" id="filter-tag" placeholder="Tag" aria-label="Filter by tag" />
+          <select id="filter-status" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            <option value="ok">Healthy</option>
+            <option value="warning">Warnings</option>
+            <option value="error">Errors</option>
+          </select>
+          <div class="quick-filters" role="group" aria-label="Quick filters">
+            <button data-filter="errors" class="ghost">Errors</button>
+            <button data-filter="warnings" class="ghost">Warnings</button>
+            <button data-filter="recent" class="ghost">Recent</button>
+            <button data-filter="mine" class="ghost">My items</button>
+          </div>
+          <button id="capsule-import" class="ghost">Import JSON/CSV/TXT</button>
         </div>
-      </form>
-      <div id="actions-output" class="output"></div>
-    </section>
-
-    <section id="panel-capsules" class="panel">
-      <h2>Capsule Library</h2>
-      <div class="filter-row">
-        <input id="filter-tag" type="text" placeholder="Filter by tag" />
-        <input id="filter-query" type="text" placeholder="Search text" />
-        <button id="btn-filter" class="secondary">Apply</button>
-      </div>
-      <ul id="capsule-list" class="capsule-list"></ul>
-    </section>
-
-    <section id="panel-simulation" class="panel">
-      <h2>Simulation Results</h2>
-      <p class="panel-description">
-        Review Gaia's projected plan, risk profile, and expected impact from the latest simulation.
-      </p>
-      <div id="simulation-output" class="output placeholder">Awaiting simulation.</div>
-    </section>
-
-    <section id="panel-research" class="panel">
-      <h2>Scientific Research Explorer</h2>
-      <p class="panel-description">
-        Gaia queries open scientific datasets to surface high-impact economic and environmental research insights.
-      </p>
-      <form id="research-form" class="research-form">
-        <input id="research-query" type="text" placeholder="e.g. community microgrids" required />
-        <button type="button" id="btn-research" class="primary">Explore Knowledge</button>
-      </form>
-      <div class="auto-research">
-        <label class="toggle">
-          <input type="checkbox" id="auto-research" />
-          <span>Auto Explore Knowledge</span>
-        </label>
-        <small class="auto-hint">Gaia cycles through trusted sustainability topics every minute.</small>
-      </div>
-      <div id="research-output" class="output"></div>
-    </section>
-
-    <section id="panel-insights" class="panel">
-      <h2>Autonomous Insights</h2>
-      <p class="panel-description">
-        Gaia periodically reflects on stored capsules and learning progress to suggest the next best actions.
-      </p>
-      <div class="auto-insights">
-        <label class="toggle">
-          <input type="checkbox" id="auto-insights" />
-          <span>Auto Reflect</span>
-        </label>
-        <small class="auto-hint">Gaia will surface fresh insights every few minutes when enabled.</small>
-      </div>
-      <div id="insights-summary" class="insights-summary">No insights generated yet.</div>
-      <div id="insights-output" class="insights-grid"></div>
-      <div id="insights-next" class="insights-next"></div>
-      <div id="insights-reflections" class="insights-reflections"></div>
-    </section>
-
-    <section id="panel-learning" class="panel">
-      <h2>Learning Progress</h2>
-      <div class="learning-grid">
-        <div class="learning-card">
-          <span>Current Version</span>
-          <strong id="learning-version">-</strong>
+        <div class="bulk-actions" id="capsule-bulk-actions" hidden>
+          <span id="capsule-selected-count">0 selected</span>
+          <button id="bulk-export" class="ghost">Export selected</button>
+          <button id="bulk-delete" class="danger">Delete selected</button>
         </div>
-        <div class="learning-card">
-          <span>Last Delta</span>
-          <strong id="learning-delta">0</strong>
+        <div class="table-wrapper" role="region" aria-live="polite">
+          <div class="table-head">
+            <div class="table-row table-row--head">
+              <div class="table-cell checkbox"><input type="checkbox" id="capsule-select-all" aria-label="Select all capsules" /></div>
+              <div class="table-cell">ID</div>
+              <div class="table-cell">Tag</div>
+              <div class="table-cell">Source</div>
+              <div class="table-cell">Status</div>
+              <div class="table-cell">Created</div>
+              <div class="table-cell">Last run</div>
+              <div class="table-cell actions">Actions</div>
+            </div>
+          </div>
+          <div id="capsule-table" class="table-body" role="grid" tabindex="0"></div>
+          <div id="capsule-empty" class="empty-state">
+            <p>No capsules yet.</p>
+            <p>Paste text into Instruction or import JSON/CSV/TXT to get started.</p>
+          </div>
         </div>
-      </div>
-      <div class="learning-stats">
-        <div class="learning-stat">
-          <span>Average Δ (10)</span>
-          <strong id="learning-average">-</strong>
-        </div>
-        <div class="learning-stat">
-          <span>Peak Δ</span>
-          <strong id="learning-best">-</strong>
-        </div>
-        <div class="learning-stat">
-          <span>Lowest Δ</span>
-          <strong id="learning-worst">-</strong>
-        </div>
-      </div>
-      <div id="learning-signal" class="learning-signal">Awaiting learning activity.</div>
-      <canvas id="learning-trend" width="360" height="140" aria-label="Learning trend sparkline"></canvas>
-    </section>
+        <footer class="table-footer">
+          <div class="pagination">
+            <button id="capsule-prev" class="ghost">Prev</button>
+            <span id="capsule-page">Page 1</span>
+            <button id="capsule-next" class="ghost">Next</button>
+          </div>
+        </footer>
+        <aside id="capsule-drawer" class="details-drawer" aria-hidden="true">
+          <button class="drawer-close" id="capsule-drawer-close" aria-label="Close details">×</button>
+          <h3>Capsule details</h3>
+          <div id="capsule-drawer-content"></div>
+        </aside>
+      </section>
 
-    <section id="panel-logs" class="panel">
-      <h2>System Logs</h2>
-      <pre id="log-output" class="log-output"></pre>
-      <button id="btn-download-logs" class="secondary">Download Logs</button>
-    </section>
+      <section id="section-research" class="content-section" aria-labelledby="research-title">
+        <header class="section-header">
+          <div>
+            <h2 id="research-title">Research queue</h2>
+            <a href="#" class="help-link" data-help="research">Learn more</a>
+          </div>
+          <div class="kpi-strip" id="research-kpis"></div>
+        </header>
+        <div class="section-body column">
+          <form id="research-form" class="research-form" novalidate>
+            <input id="research-query" type="text" placeholder="Add topic e.g. regenerative agriculture" required />
+            <button type="submit" class="primary">Queue topic</button>
+          </form>
+          <div class="research-queue" id="research-queue" aria-live="polite"></div>
+          <div class="research-history" id="research-history"></div>
+        </div>
+      </section>
 
-    <section id="panel-exports" class="panel">
-      <h2>Exports</h2>
-      <div class="export-row">
-        <button data-fmt="json" class="export-btn">Export JSON</button>
-        <button data-fmt="csv" class="export-btn">Export CSV</button>
-        <button data-fmt="txt" class="export-btn">Export TXT</button>
-      </div>
-      <button id="btn-refresh-capsules" class="secondary">Refresh Capsule List</button>
-    </section>
-  </main>
+      <section id="section-insights" class="content-section" aria-labelledby="insights-title">
+        <header class="section-header">
+          <div>
+            <h2 id="insights-title">Insights</h2>
+            <a href="#" class="help-link" data-help="insights">How insights are generated</a>
+          </div>
+          <div class="kpi-strip" id="insights-kpis"></div>
+        </header>
+        <div id="insights-stream" class="insights-stream" aria-live="polite"></div>
+      </section>
 
-  <footer class="footer">
-    <p>Gaia prioritizes transparency, consent, and environmental stewardship. Emergency kill switch available to administrators.</p>
-  </footer>
+      <section id="section-simulation" class="content-section" aria-labelledby="simulation-title">
+        <header class="section-header">
+          <div>
+            <h2 id="simulation-title">Simulation</h2>
+            <a href="#" class="help-link" data-help="simulation">Simulation guide</a>
+          </div>
+          <div class="kpi-strip" id="simulation-kpis"></div>
+        </header>
+        <div class="section-toolbar">
+          <button id="simulation-schedule" class="ghost">Schedule run</button>
+          <button id="simulation-diff" class="ghost">Compare scenarios</button>
+        </div>
+        <div id="simulation-list" class="simulation-list"></div>
+      </section>
+
+      <section id="section-learning" class="content-section" aria-labelledby="learning-title">
+        <header class="section-header">
+          <div>
+            <h2 id="learning-title">Learning</h2>
+            <a href="#" class="help-link" data-help="learning">Learning model</a>
+          </div>
+          <div class="kpi-strip" id="learning-kpis"></div>
+        </header>
+        <div class="learning-chart-container">
+          <div class="learning-range">
+            <button data-range="7" class="ghost">7d</button>
+            <button data-range="30" class="ghost">30d</button>
+            <button data-range="90" class="ghost">90d</button>
+          </div>
+          <canvas id="learning-chart" height="160" aria-label="Learning delta trend"></canvas>
+          <div id="learning-events" class="learning-events"></div>
+        </div>
+        <div class="learning-actions">
+          <span id="learning-last-delta">Δ0</span>
+          <span id="learning-version">gaia-v1.0</span>
+          <button id="learning-revert" class="ghost">Revert last</button>
+        </div>
+      </section>
+
+      <section id="section-logs" class="content-section" aria-labelledby="logs-title">
+        <header class="section-header">
+          <div>
+            <h2 id="logs-title">System logs</h2>
+            <a href="#" class="help-link" data-help="logs">Logging</a>
+          </div>
+          <div class="kpi-strip" id="logs-kpis"></div>
+        </header>
+        <div class="log-toolbar">
+          <select id="log-level" aria-label="Filter by level">
+            <option value="all">All levels</option>
+            <option value="info">Info</option>
+            <option value="warn">Warnings</option>
+            <option value="error">Errors</option>
+          </select>
+          <button id="log-download" class="ghost">Download segment</button>
+        </div>
+        <div id="log-stream" class="log-stream" aria-live="polite"></div>
+      </section>
+
+      <section id="section-exports" class="content-section" aria-labelledby="exports-title">
+        <header class="section-header">
+          <div>
+            <h2 id="exports-title">Exports</h2>
+            <a href="#" class="help-link" data-help="exports">Export guide</a>
+          </div>
+          <div class="kpi-strip" id="exports-kpis"></div>
+        </header>
+        <div class="exports-panel">
+          <div class="exports-actions">
+            <button data-format="json" class="ghost">Export JSON</button>
+            <button data-format="csv" class="ghost">Export CSV</button>
+            <button data-format="txt" class="ghost">Export TXT</button>
+          </div>
+          <div id="export-history" class="export-history"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <template id="toast-template">
+    <div class="toast" role="status">
+      <span class="toast-message"></span>
+      <button class="toast-copy" type="button">Copy ID</button>
+      <button class="toast-close" type="button" aria-label="Dismiss">×</button>
+    </div>
+  </template>
 
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </body>
