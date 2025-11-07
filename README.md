@@ -1,3 +1,12 @@
+---
+title: Gaia Dashboard
+emoji: "🌍"
+colorFrom: indigo
+colorTo: green
+sdk: docker
+pinned: false
+---
+
 # Gaia Dashboard
 
 Gaia is an ethical, transparent, self-improving assistant focused on delivering
