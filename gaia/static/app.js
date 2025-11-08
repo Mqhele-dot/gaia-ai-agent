@@ -1,6 +1,8 @@
 const $ = (selector, scope = document) => scope.querySelector(selector);
 const $$ = (selector, scope = document) => Array.from(scope.querySelectorAll(selector));
 
+const PREFERENCES_KEY = 'gaia-dashboard-preferences-v1';
+
 const appState = {
   status: null,
   quickChecks: null,
@@ -25,6 +27,72 @@ const appState = {
   halted: false,
   activeSection: 'section-actions',
 };
+
+function readPreferences() {
+  if (typeof window === 'undefined' || !window.localStorage) return {};
+  try {
+    const raw = window.localStorage.getItem(PREFERENCES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    return parsed;
+  } catch (error) {
+    console.warn('Failed to read preferences', error);
+    return {};
+  }
+}
+
+function writePreferences(prefs) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(PREFERENCES_KEY, JSON.stringify(prefs));
+  } catch (error) {
+    console.warn('Failed to persist preferences', error);
+  }
+}
+
+function capturePreferences() {
+  return {
+    autoRefresh: appState.autoRefresh,
+    autoToggles: {
+      analyze: !!ui.chips.analyze?.checked,
+      simulate: !!ui.chips.simulate?.checked,
+      learning: !!ui.chips.learning?.checked,
+      research: !!ui.chips.research?.checked,
+      insights: !!ui.chips.insights?.checked,
+    },
+    presets: appState.presets.slice(-10),
+  };
+}
+
+function persistPreferences(overrides = {}) {
+  const snapshot = { ...capturePreferences(), ...overrides };
+  if (overrides.presets) {
+    snapshot.presets = overrides.presets.slice(-10);
+  }
+  writePreferences(snapshot);
+}
+
+function hydratePreferences() {
+  const prefs = readPreferences();
+  if (Object.keys(prefs).length === 0) return;
+  if (typeof prefs.autoRefresh === 'boolean') {
+    appState.autoRefresh = prefs.autoRefresh;
+    if (ui.autoRefresh) ui.autoRefresh.checked = prefs.autoRefresh;
+  }
+  if (prefs.autoToggles && typeof prefs.autoToggles === 'object') {
+    Object.entries(prefs.autoToggles).forEach(([key, value]) => {
+      if (ui.chips[key]) {
+        ui.chips[key].checked = Boolean(value);
+      }
+    });
+  }
+  if (Array.isArray(prefs.presets)) {
+    appState.presets = prefs.presets
+      .filter((preset) => preset && typeof preset === 'object')
+      .slice(-10);
+  }
+}
 
 const api = {
   async getStatus() {
@@ -1072,8 +1140,9 @@ function storePreset() {
     context: ui.actions.context.value,
     tag: ui.actions.tag.value,
   };
-  appState.presets.push(preset);
+  appState.presets = [...appState.presets.slice(-9), preset];
   renderPresets();
+  persistPreferences({ presets: appState.presets });
   toast('Preset saved', { runId: preset.id });
 }
 
@@ -1222,6 +1291,7 @@ function initEvents() {
     chip.addEventListener('change', () => {
       renderActionKPIs();
       processAutoLoops();
+      persistPreferences();
     });
   });
   ui.refreshButton.addEventListener('click', async () => {
@@ -1230,6 +1300,7 @@ function initEvents() {
   });
   ui.autoRefresh.addEventListener('change', (event) => {
     appState.autoRefresh = event.target.checked;
+    persistPreferences();
   });
   ui.quickChecks.toggle.addEventListener('click', () => {
     const expanded = ui.quickChecks.toggle.getAttribute('aria-expanded') === 'true';
@@ -1318,6 +1389,7 @@ function initEvents() {
 }
 
 async function bootstrap() {
+  hydratePreferences();
   initEvents();
   processAutoLoops();
   await refreshStatus();
