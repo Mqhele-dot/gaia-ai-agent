@@ -156,6 +156,9 @@ can execute directly.
 3. Set the desired `ADMIN_TOKEN`, `GAIA_VERSION`, and `GAIA_DATA_DIR` secrets in
    the Space settings (the defaults from `.env.example` also work).
 
+   *When a Space provides persistent storage via `HF_PERSISTENT_DIR` or `HF_HOME`,
+   Gaia automatically writes to `<persistent>/gaia` so activity survives restarts.*
+
 The Docker build installs dependencies and starts Gunicorn via the command
 
 ```
@@ -165,6 +168,20 @@ gunicorn gaia.app:app --bind 0.0.0.0:7860
 The provided root-level [`app.py`](app.py) mirrors this behaviour for local
 testing or for Spaces configured with the "Python" runtime that expects an
 `app` object in the module namespace.
+
+### Patch-based upgrades
+
+If you already host an earlier Gaia build, you can apply just the latest
+dashboard upgrades as a patch rather than re-uploading the full project:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/<your-org>/gaia-ai-agent/main/patches/latest.patch | git apply
+```
+
+The patch contains changes to `/settings`, the control-surface UI, and the
+Hugging Face–friendly storage defaults so Spaces deployments stay in sync. View
+the patch contents under [`patches/`](patches/) if you need to audit before
+applying.
 
 ## API Reference
 

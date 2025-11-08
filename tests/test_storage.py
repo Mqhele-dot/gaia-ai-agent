@@ -1,4 +1,5 @@
 import importlib
+from pathlib import Path
 
 
 def test_save_and_list_capsules(tmp_path, monkeypatch):
@@ -48,3 +49,16 @@ def test_state_round_trip(tmp_path, monkeypatch):
     storage.save_state({"halted": True})
     persisted = storage.load_state()
     assert persisted["halted"] is True
+
+
+def test_hf_persistent_storage_fallback(tmp_path, monkeypatch):
+    monkeypatch.delenv("GAIA_DATA_DIR", raising=False)
+    monkeypatch.setenv("SPACE_ID", "user/space")
+    monkeypatch.setenv("HF_PERSISTENT_DIR", str(tmp_path))
+
+    from gaia.gaia_core import storage
+
+    importlib.reload(storage)
+
+    assert storage.DATA_DIR == Path(tmp_path) / "gaia"
+    assert storage.CAPSULE_DIR.parent == storage.DATA_DIR

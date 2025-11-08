@@ -9,7 +9,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-DATA_DIR = Path(os.getenv("GAIA_DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
+
+def _resolve_data_dir() -> Path:
+    """Determine the best storage directory for the current environment."""
+
+    explicit = os.getenv("GAIA_DATA_DIR")
+    if explicit:
+        return Path(explicit)
+
+    if os.getenv("SPACE_ID"):
+        for env_key in ("HF_PERSISTENT_DIR", "HF_HOME"):
+            candidate_root = os.getenv(env_key)
+            if candidate_root:
+                return Path(candidate_root) / "gaia"
+
+        default_root = Path("/data")
+        if default_root.exists():
+            return default_root / "gaia"
+
+    return Path(__file__).resolve().parents[1] / "data"
+
+
+DATA_DIR = _resolve_data_dir()
 CAPSULE_DIR = DATA_DIR / "capsules"
 LOG_DIR = DATA_DIR / "logs"
 MODELS_DIR = DATA_DIR / "models"
