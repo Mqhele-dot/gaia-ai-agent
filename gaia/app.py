@@ -25,6 +25,7 @@ from flask import (
     send_file,
 )
 
+from gaia.gaia_core.autonomy import AutonomyManager
 from gaia.gaia_core.insights import generate_insights
 from gaia.gaia_core.learning import learning_step, load_learning_history
 from gaia.gaia_core.metrics import tracker
@@ -72,6 +73,8 @@ if _learning_history:
         float(last.get("delta_score", 0.0)),
         (entry.get("delta_score", 0.0) for entry in _learning_history),
     )
+
+AUTONOMY_MANAGER = AutonomyManager.bootstrap()
 
 
 def _record_event(

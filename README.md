@@ -27,6 +27,10 @@ interaction, exposes runtime metrics, and provides an emergency kill switch.
 - **Scientific research explorer** – Query open scientific datasets with a
   curated sustainability fallback so Gaia can surface new ideas responsibly or
   cycle through trusted topics automatically.
+- **Autonomous operations** – A background autonomy manager continuously cycles
+  through research, capsule creation, analysis, simulation, learning, and
+  insight generation within the declared guardrails so Gaia keeps working even
+  when operators step away.
 - **Automation toggles** – Enable auto-analyze, auto-simulate, auto-learning,
   and auto-research loops directly from the UI while the status bar highlights
   the latest action.
@@ -44,6 +48,12 @@ network is unavailable) so fresh insights continue to surface without constant
 manual input. These automations respect the same policy checks and kill-switch
 state as manual actions. The Insights tab can also run on an automatic cadence
 to surface Gaia's latest reflections and recommended follow-up tasks.
+
+By default the new autonomy manager runs with every automation toggle enabled
+and loops roughly once per minute (configurable via `GAIA_AUTONOMY_INTERVAL`).
+The manager persists new capsules, logs each background action, and updates the
+learning history so `/status` always reflects Gaia's most recent autonomous
+decision.
 
 ## Project Layout
 
@@ -94,6 +104,7 @@ The dashboard will be available at [http://localhost:8000](http://localhost:8000
 | `ADMIN_TOKEN`  | `changeme`     | Required header for `/admin/kill` requests.                       |
 | `GAIA_VERSION` | `gaia-v1.0`    | Initial version string displayed in `/status`.                    |
 | `GAIA_DATA_DIR`| `gaia/data`    | Root directory for capsules, logs, state, and upgrade ledgers.    |
+| `GAIA_AUTONOMY_INTERVAL` | `60` | Seconds between background autonomy cycles.                       |
 
 ## Security and Policy
 
@@ -264,6 +275,10 @@ following patterns:
 
 Upgrade proposals append to `gaia/data/upgrades_ledger.jsonl` with the recorded
 decision, ethics score, and notes for long-term auditing.
+
+Background autonomy runs are mirrored to `gaia/data/autonomy_runs.jsonl` so you
+can audit every research cycle, capsule save, analysis, simulation, learning
+step, and insight produced without operator prompts.
 
 ## Screenshots
 

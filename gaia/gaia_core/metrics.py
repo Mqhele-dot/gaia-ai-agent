@@ -32,6 +32,17 @@ ACTION_LABELS = {
     "system_resumed": "System resumed",
     "settings_view": "Settings viewed",
     "settings_update": "Settings updated",
+    "autonomy_research": "Autonomy research",
+    "autonomy_research_error": "Autonomy research error",
+    "autonomy_capsule": "Autonomy capsule saved",
+    "autonomy_capsule_blocked": "Autonomy capsule blocked",
+    "autonomy_analysis": "Autonomy analysis",
+    "autonomy_analysis_blocked": "Autonomy analysis blocked",
+    "autonomy_simulation": "Autonomy simulation",
+    "autonomy_simulation_blocked": "Autonomy simulation blocked",
+    "autonomy_learning": "Autonomy learning",
+    "autonomy_insight": "Autonomy insight",
+    "autonomy_idle": "Autonomy idle",
 }
 
 
@@ -104,6 +115,19 @@ class MetricsTracker:
                 self._data["capsules_processed"] += capsules_delta
             humanized = _humanize(action, summary)
             self._update_last_action(action, summary, humanized=humanized)
+
+    def record_background(
+        self,
+        action: str,
+        *,
+        capsules_delta: int = 0,
+        summary: Optional[str] = None,
+    ) -> None:
+        with self._lock:
+            if capsules_delta:
+                self._data["capsules_processed"] += capsules_delta
+            humanized = _humanize(action, summary)
+            self._update_last_action(action, summary, humanized=humanized, event=action)
 
     def set_version(self, version: str) -> None:
         with self._lock:

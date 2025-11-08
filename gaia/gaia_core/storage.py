@@ -34,6 +34,7 @@ DATA_DIR = _resolve_data_dir()
 CAPSULE_DIR = DATA_DIR / "capsules"
 LOG_DIR = DATA_DIR / "logs"
 MODELS_DIR = DATA_DIR / "models"
+AUTONOMY_LOG = DATA_DIR / "autonomy_runs.jsonl"
 ACTIVITY_LOG = LOG_DIR / "activity.jsonl"
 UPGRADE_LEDGER = DATA_DIR / "upgrades_ledger.jsonl"
 STATE_FILE = DATA_DIR / "state.json"
@@ -42,16 +43,22 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 DEFAULT_SETTINGS = {
     "auto_refresh": True,
     "toggles": {
-        "analyze": False,
-        "simulate": False,
-        "learning": False,
-        "research": False,
-        "insights": False,
+        "analyze": True,
+        "simulate": True,
+        "learning": True,
+        "research": True,
+        "insights": True,
     },
 }
 
 for path in (CAPSULE_DIR, LOG_DIR, MODELS_DIR):
     path.mkdir(parents=True, exist_ok=True)
+
+
+def _append_jsonl(path: Path, payload: Dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload) + "\n")
 
 
 def _atomic_write(path: Path, payload: Dict[str, object]) -> None:
@@ -99,9 +106,7 @@ def list_capsules(tag: str | None = None, query: str | None = None) -> List[Dict
 def append_log(event: Dict[str, object]) -> None:
     entry = dict(event)
     entry.setdefault("ts", _timestamp())
-    ACTIVITY_LOG.parent.mkdir(parents=True, exist_ok=True)
-    with ACTIVITY_LOG.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry) + "\n")
+    _append_jsonl(ACTIVITY_LOG, entry)
 
 
 def iter_logs() -> Iterable[str]:
@@ -121,10 +126,14 @@ def record_upgrade_decision(payload: Dict[str, object]) -> Dict[str, object]:
     decision = "accepted" if entry.get("accepted") else "rejected"
     entry.setdefault("decision", decision)
     entry.setdefault("notes", payload.get("notes", []))
-    UPGRADE_LEDGER.parent.mkdir(parents=True, exist_ok=True)
-    with UPGRADE_LEDGER.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry) + "\n")
+    _append_jsonl(UPGRADE_LEDGER, entry)
     return entry
+
+
+def record_autonomy_event(payload: Dict[str, object]) -> None:
+    entry = dict(payload)
+    entry.setdefault("ts", _timestamp())
+    _append_jsonl(AUTONOMY_LOG, entry)
 
 
 def load_state() -> Dict[str, object]:
@@ -201,6 +210,7 @@ __all__ = [
     "append_log",
     "iter_logs",
     "CAPSULE_DIR",
+    "AUTONOMY_LOG",
     "ACTIVITY_LOG",
     "MODELS_DIR",
     "UPGRADE_LEDGER",
@@ -208,7 +218,9 @@ __all__ = [
     "load_state",
     "save_state",
     "record_upgrade_decision",
+    "record_autonomy_event",
     "SETTINGS_FILE",
     "load_settings",
     "save_settings",
+    "DEFAULT_SETTINGS",
 ]
