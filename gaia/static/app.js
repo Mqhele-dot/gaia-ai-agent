@@ -1,7 +1,7 @@
 const $ = (selector, scope = document) => scope.querySelector(selector);
 const $$ = (selector, scope = document) => Array.from(scope.querySelectorAll(selector));
 
-const PREFERENCES_KEY = 'gaia-dashboard-preferences-v1';
+const PRESETS_KEY = 'gaia-dashboard-presets-v1';
 
 const appState = {
   status: null,
@@ -28,190 +28,326 @@ const appState = {
   activeSection: 'section-actions',
 };
 
-function readPreferences() {
-  if (typeof window === 'undefined' || !window.localStorage) return {};
-  try {
-    const raw = window.localStorage.getItem(PREFERENCES_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
-    return parsed;
-  } catch (error) {
-    console.warn('Failed to read preferences', error);
-    return {};
+const eventBus = new EventTarget();
+let statusPollingId = null;
+
+function manageStatusPolling(enabled) {
+  if (statusPollingId) {
+    clearInterval(statusPollingId);
+    statusPollingId = null;
+  }
+  if (enabled) {
+    statusPollingId = setInterval(async () => {
+      if (!appState.autoRefresh) return;
+      try {
+        await refreshStatus();
+      } catch (error) {
+        console.warn('Auto refresh failed', error);
+      }
+    }, 15_000);
   }
 }
 
-function writePreferences(prefs) {
+function applyPreferredTheme() {
+  const prefersDark =
+    typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : false;
+  if (document.body) {
+    document.body.dataset.theme = prefersDark ? 'dark' : 'light';
+  }
+}
+
+if (typeof window !== 'undefined' && window.matchMedia) {
+  const themeWatcher = window.matchMedia('(prefers-color-scheme: dark)');
+  if (typeof themeWatcher.addEventListener === 'function') {
+    themeWatcher.addEventListener('change', applyPreferredTheme);
+  } else if (typeof themeWatcher.addListener === 'function') {
+    themeWatcher.addListener(applyPreferredTheme);
+  }
+}
+
+applyPreferredTheme();
+
+function readPresets() {
+  if (typeof window === 'undefined' || !window.localStorage) return [];
+  try {
+    const raw = window.localStorage.getItem(PRESETS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((preset) => preset && typeof preset === 'object')
+      .slice(-10);
+  } catch (error) {
+    console.warn('Failed to load presets', error);
+    return [];
+  }
+}
+
+function writePresets(presets) {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
-    window.localStorage.setItem(PREFERENCES_KEY, JSON.stringify(prefs));
+    window.localStorage.setItem(PRESETS_KEY, JSON.stringify(presets.slice(-10)));
   } catch (error) {
-    console.warn('Failed to persist preferences', error);
+    console.warn('Failed to persist presets', error);
   }
 }
 
-function capturePreferences() {
-  return {
-    autoRefresh: appState.autoRefresh,
-    autoToggles: {
-      analyze: !!ui.chips.analyze?.checked,
-      simulate: !!ui.chips.simulate?.checked,
-      learning: !!ui.chips.learning?.checked,
-      research: !!ui.chips.research?.checked,
-      insights: !!ui.chips.insights?.checked,
+function hydratePresets() {
+  const presets = readPresets();
+  if (presets.length) {
+    appState.presets = presets;
+  }
+}
+
+function createSettingsStore() {
+  const defaults = {
+    toggles: {
+      analyze: false,
+      simulate: false,
+      learning: false,
+      research: false,
+      insights: false,
     },
-    presets: appState.presets.slice(-10),
+    autoRefresh: true,
+  };
+
+  let state = {
+    toggles: { ...defaults.toggles },
+    autoRefresh: defaults.autoRefresh,
+    hydrated: false,
+    loading: false,
+    error: null,
+  };
+
+  const listeners = new Set();
+
+  const snapshot = () => ({
+    ...state,
+    toggles: { ...state.toggles },
+  });
+
+  const notify = () => {
+    const current = snapshot();
+    listeners.forEach((listener) => listener(current));
+  };
+
+  function assign(partial) {
+    if (partial.toggles) {
+      state.toggles = { ...state.toggles, ...partial.toggles };
+    }
+    Object.entries(partial).forEach(([key, value]) => {
+      if (key !== 'toggles') {
+        state[key] = value;
+      }
+    });
+    notify();
+  }
+
+  async function hydrate() {
+    if (state.loading) return snapshot();
+    assign({ loading: true });
+    const client = window.GaiaApi;
+    if (!client) {
+      const error = { error: 'API client unavailable' };
+      assign({
+        loading: false,
+        hydrated: true,
+        error,
+        toggles: { ...defaults.toggles },
+        autoRefresh: defaults.autoRefresh,
+      });
+      return snapshot();
+    }
+    const response = await client.get('/settings', { retries: 2, retryDelay: 400 });
+    if (response.ok) {
+      const data = response.data || {};
+      assign({
+        toggles: { ...defaults.toggles, ...(data.toggles || {}) },
+        autoRefresh:
+          typeof data.auto_refresh === 'boolean' ? data.auto_refresh : defaults.autoRefresh,
+        loading: false,
+        hydrated: true,
+        error: null,
+      });
+    } else {
+      assign({
+        toggles: { ...defaults.toggles },
+        autoRefresh: defaults.autoRefresh,
+        loading: false,
+        hydrated: true,
+        error: response.error,
+      });
+    }
+    return snapshot();
+  }
+
+  async function commit() {
+    const client = window.GaiaApi;
+    if (!client) {
+      const error = { error: 'API client unavailable' };
+      assign({ error });
+      throw error;
+    }
+    const response = await client.patch(
+      '/settings',
+      { auto_refresh: state.autoRefresh, toggles: state.toggles },
+      { retries: 2, retryDelay: 500 },
+    );
+    if (!response.ok) {
+      assign({ error: response.error });
+      throw response.error;
+    }
+    assign({ error: null });
+    return response.data;
+  }
+
+  async function setToggle(key, value) {
+    const previous = state.toggles[key];
+    assign({ toggles: { [key]: value } });
+    try {
+      await commit();
+    } catch (error) {
+      assign({ toggles: { [key]: previous } });
+      throw error;
+    }
+    return snapshot();
+  }
+
+  async function setAutoRefresh(value) {
+    const previous = state.autoRefresh;
+    assign({ autoRefresh: value });
+    try {
+      await commit();
+    } catch (error) {
+      assign({ autoRefresh: previous });
+      throw error;
+    }
+    return snapshot();
+  }
+
+  function subscribe(listener) {
+    listeners.add(listener);
+    listener(snapshot());
+    return () => listeners.delete(listener);
+  }
+
+  return {
+    hydrate,
+    setToggle,
+    setAutoRefresh,
+    subscribe,
+    getState: snapshot,
   };
 }
 
-function persistPreferences(overrides = {}) {
-  const snapshot = { ...capturePreferences(), ...overrides };
-  if (overrides.presets) {
-    snapshot.presets = overrides.presets.slice(-10);
+const settingsStore = createSettingsStore();
+let settingsErrorNotified = false;
+
+function getApiClient() {
+  if (!window.GaiaApi) {
+    throw { error: 'API client unavailable' };
   }
-  writePreferences(snapshot);
+  return window.GaiaApi;
 }
 
-function hydratePreferences() {
-  const prefs = readPreferences();
-  if (Object.keys(prefs).length === 0) return;
-  if (typeof prefs.autoRefresh === 'boolean') {
-    appState.autoRefresh = prefs.autoRefresh;
-    if (ui.autoRefresh) ui.autoRefresh.checked = prefs.autoRefresh;
+function ensureSuccess(result) {
+  if (!result.ok) {
+    const error = result.error || { error: 'Request failed' };
+    if (result.requestId && typeof error === 'object') {
+      error.requestId = result.requestId;
+    }
+    throw error;
   }
-  if (prefs.autoToggles && typeof prefs.autoToggles === 'object') {
-    Object.entries(prefs.autoToggles).forEach(([key, value]) => {
-      if (ui.chips[key]) {
-        ui.chips[key].checked = Boolean(value);
-      }
-    });
-  }
-  if (Array.isArray(prefs.presets)) {
-    appState.presets = prefs.presets
-      .filter((preset) => preset && typeof preset === 'object')
-      .slice(-10);
-  }
+  return result;
 }
 
 const api = {
   async getStatus() {
-    return fetch('/status').then((resp) => resp.json());
+    const result = await getApiClient().get('/status', { retries: 1, retryDelay: 300 });
+    return ensureSuccess(result).data;
   },
   async runQuickChecks() {
-    return fetch('/ops/quick-checks').then((resp) => resp.json());
+    const result = await getApiClient().get('/ops/quick-checks', { retries: 1, retryDelay: 300 });
+    return ensureSuccess(result).data;
   },
   async listCapsules(params = {}) {
     const url = new URL('/capsules/list', window.location.origin);
     if (params.tag) url.searchParams.set('tag', params.tag);
     if (params.q) url.searchParams.set('q', params.q);
-    return fetch(url.toString()).then((resp) => resp.json());
+    const result = await getApiClient().get(url.toString(), { retries: 1, retryDelay: 300 });
+    return ensureSuccess(result).data;
   },
   async saveCapsule(payload) {
-    return fetch('/capsules/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).then(async (resp) => {
-      if (!resp.ok) {
-        const error = await resp.json().catch(() => ({ error: resp.statusText }));
-        throw error;
-      }
-      return resp.json();
-    });
+    const result = await getApiClient().post('/capsules/save', payload, { retries: 2, retryDelay: 400 });
+    const success = ensureSuccess(result);
+    return { data: success.data, requestId: success.requestId };
   },
   async analyzeCapsule(payload) {
-    return fetch('/capsules/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).then(async (resp) => {
-      if (!resp.ok) {
-        const error = await resp.json().catch(() => ({ error: resp.statusText }));
-        throw error;
-      }
-      return resp.json();
-    });
+    const result = await getApiClient().post('/capsules/analyze', payload, { retries: 2, retryDelay: 400 });
+    const success = ensureSuccess(result);
+    return { data: success.data, requestId: success.requestId };
   },
   async simulateCapsule(payload) {
-    return fetch('/simulate/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).then(async (resp) => {
-      if (!resp.ok) {
-        const error = await resp.json().catch(() => ({ error: resp.statusText }));
-        throw error;
-      }
-      return resp.json();
-    });
+    const result = await getApiClient().post('/simulate/run', payload, { retries: 2, retryDelay: 400 });
+    const success = ensureSuccess(result);
+    return { data: success.data, requestId: success.requestId };
   },
   async runLearning(payload) {
-    return fetch('/learning/step', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).then(async (resp) => {
-      if (!resp.ok) {
-        const error = await resp.json().catch(() => ({ error: resp.statusText }));
-        throw error;
-      }
-      return resp.json();
-    });
+    const result = await getApiClient().post('/learning/step', payload, { retries: 2, retryDelay: 400 });
+    const success = ensureSuccess(result);
+    return { data: success.data, requestId: success.requestId };
   },
   async proposeUpgrade(payload) {
-    return fetch('/upgrades/propose', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).then(async (resp) => {
-      if (!resp.ok) {
-        const error = await resp.json().catch(() => ({ error: resp.statusText }));
-        throw error;
-      }
-      return resp.json();
-    });
+    const result = await getApiClient().post('/upgrades/propose', payload, { retries: 2, retryDelay: 400 });
+    const success = ensureSuccess(result);
+    return { data: success.data, requestId: success.requestId };
   },
   async runResearch(payload) {
-    return fetch('/research/explore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).then(async (resp) => {
-      if (!resp.ok) {
-        const error = await resp.json().catch(() => ({ error: resp.statusText }));
-        throw error;
-      }
-      return resp.json();
-    });
+    const result = await getApiClient().post('/research/explore', payload, { retries: 2, retryDelay: 400 });
+    const success = ensureSuccess(result);
+    return { data: success.data, requestId: success.requestId };
   },
   async fetchLearningHistory() {
-    return fetch('/learning/history').then((resp) => resp.json());
+    const result = await getApiClient().get('/learning/history');
+    return ensureSuccess(result).data;
   },
   async fetchInsights() {
-    return fetch('/insights/reflect').then((resp) => resp.json());
+    const result = await getApiClient().get('/insights/reflect', { retries: 1, retryDelay: 300 });
+    return ensureSuccess(result).data;
   },
   async fetchLogs() {
-    return fetch('/export/logs').then((resp) => resp.text());
+    const result = await getApiClient().get('/export/logs', { retries: 1, retryDelay: 300 });
+    return ensureSuccess(result).data;
   },
   async exportCapsules(format) {
-    return fetch(`/export/capsules?fmt=${format}`).then((resp) => resp.blob());
+    const result = await getApiClient().get(`/export/capsules?fmt=${format}`, {
+      retries: 1,
+      retryDelay: 300,
+    });
+    const success = ensureSuccess(result);
+    const payload = success.data;
+    if (payload instanceof Blob) return payload;
+    if (typeof payload === 'string') {
+      const type = format === 'csv' ? 'text/csv' : format === 'txt' ? 'text/plain' : 'application/json';
+      return new Blob([payload], { type });
+    }
+    return new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   },
   async killSwitch(token) {
-    return fetch('/admin/kill', {
-      method: 'POST',
-      headers: { 'X-ADMIN-TOKEN': token },
-    }).then(async (resp) => {
-      if (!resp.ok) {
-        const error = await resp.json().catch(() => ({ error: resp.statusText }));
-        throw error;
-      }
-      return resp.json();
-    });
+    const result = await getApiClient().post(
+      '/admin/kill',
+      {},
+      { headers: { 'X-ADMIN-TOKEN': token }, retries: 1, retryDelay: 300 },
+    );
+    const success = ensureSuccess(result);
+    return { data: success.data, requestId: success.requestId };
   },
 };
 
 const ui = {
+  loading: $('#app-loading'),
   toastTemplate: $('#toast-template'),
   toastRoot: $('#toast-root'),
   navItems: $$('.nav-item'),
@@ -341,6 +477,34 @@ function toast(message, options = {}) {
   ui.toastRoot.appendChild(fragment);
   setTimeout(() => toastEl.remove(), options.duration || 6000);
 }
+
+settingsStore.subscribe((state) => {
+  const { toggles, autoRefresh, hydrated, loading, error } = state;
+  document.body.classList.toggle('is-hydrating', !hydrated || loading);
+  if (ui.loading) {
+    ui.loading.hidden = Boolean(hydrated && !loading);
+  }
+  Object.entries(ui.chips).forEach(([key, chip]) => {
+    if (!chip) return;
+    if (key in toggles) {
+      chip.checked = Boolean(toggles[key]);
+    }
+    chip.disabled = !hydrated || loading;
+  });
+  if (ui.autoRefresh) {
+    ui.autoRefresh.checked = Boolean(autoRefresh);
+    ui.autoRefresh.disabled = !hydrated || loading;
+  }
+  appState.autoRefresh = Boolean(autoRefresh);
+  manageStatusPolling(appState.autoRefresh);
+  processAutoLoops();
+  if (hydrated && !loading && error && !settingsErrorNotified) {
+    toast(`Settings fallback in use: ${error.error || error.message || error}`, {
+      runId: `settings-${Date.now()}`,
+    });
+    settingsErrorNotified = true;
+  }
+});
 
 function formatDuration(seconds) {
   const s = Math.max(0, Number(seconds) || 0);
@@ -922,7 +1086,8 @@ async function refreshCapsules() {
     const query = appState.capsuleFilters.query;
     ui.capsuleTable.body.classList.add('loading');
     const response = await api.listCapsules({ tag, q: query });
-    appState.capsules = response.map((capsule) => ({ ...capsule, text: capsule.text || '' }));
+    const capsules = Array.isArray(response.capsules) ? response.capsules : response;
+    appState.capsules = capsules.map((capsule) => ({ ...capsule, text: capsule.text || '' }));
     appState.capsules.forEach((capsule) => {
       if (!appState.capsuleMeta.has(capsule.id)) {
         appState.capsuleMeta.set(capsule.id, { source: 'operator', status: 'ok', lastRun: null });
@@ -996,23 +1161,46 @@ async function triggerSave() {
   }
   const payload = { text, tag: ui.actions.tag.value || 'general' };
   try {
-    const result = await api.saveCapsule(payload);
+    const { data: saved, requestId } = await api.saveCapsule(payload);
     const meta = {
       source: ui.actions.source.value || 'operator',
       status: 'ok',
       lastRun: null,
     };
-    appState.capsuleMeta.set(result.id, meta);
-    appState.capsules.unshift(result);
+    appState.capsuleMeta.set(saved.id, meta);
+    appState.capsules.unshift(saved);
     renderCapsuleTable();
-    toast('Capsule saved', { runId: result.id });
-    ui.actions.output.innerHTML = `<div class="badge-chip success">SAVED</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
-    if (ui.chips.analyze.checked) await triggerAnalyze(text);
-    if (ui.chips.simulate.checked) await triggerSimulation(result);
-    if (ui.chips.learning.checked) await triggerLearning();
+    toast('Capsule saved', { runId: saved.id || requestId });
+    ui.actions.output.innerHTML = `<div class="badge-chip success">SAVED</div><pre>${JSON.stringify(saved, null, 2)}</pre>`;
+    if (ui.chips.analyze.checked) {
+      try {
+        await triggerAnalyze(text);
+      } catch (analysisError) {
+        console.warn('Auto analyze failed', analysisError);
+      }
+    }
+    if (ui.chips.simulate.checked) {
+      try {
+        await triggerSimulation(saved);
+      } catch (simulationError) {
+        console.warn('Auto simulate failed', simulationError);
+      }
+    }
+    if (ui.chips.learning.checked) {
+      try {
+        await triggerLearning();
+      } catch (learningError) {
+        console.warn('Auto learning failed', learningError);
+      }
+    }
+    eventBus.dispatchEvent(
+      new CustomEvent('capsule-saved', { detail: { capsule: saved, requestId } }),
+    );
+    return saved;
   } catch (error) {
     toast(`Save failed: ${error.error || error.message || error}`);
     ui.actions.output.innerHTML = `<div class="badge-chip fail">FAILED</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
+    throw error;
   }
 }
 
@@ -1023,14 +1211,17 @@ async function triggerAnalyze(textOverride) {
     return;
   }
   try {
-    const result = await api.analyzeCapsule({ text });
-    ui.actions.output.innerHTML = `<div class="badge-chip success">ANALYZED</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
-    toast('Analysis complete', { runId: `analysis-${Date.now()}` });
-    return result;
+    const { data: analysis, requestId } = await api.analyzeCapsule({ text });
+    ui.actions.output.innerHTML = `<div class="badge-chip success">ANALYZED</div><pre>${JSON.stringify(analysis, null, 2)}</pre>`;
+    toast('Analysis complete', { runId: requestId || `analysis-${Date.now()}` });
+    eventBus.dispatchEvent(
+      new CustomEvent('capsule-analyzed', { detail: { analysis, requestId } }),
+    );
+    return analysis;
   } catch (error) {
     toast(`Analyze failed: ${error.error || error.message || error}`);
     ui.actions.output.innerHTML = `<div class="badge-chip warn">NEEDS INPUT</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
-    return null;
+    throw error;
   }
 }
 
@@ -1041,20 +1232,23 @@ async function triggerSimulation(capsule) {
     return;
   }
   try {
-    const result = await api.simulateCapsule({ text, capsule_id: capsule?.id });
+    const { data: simulation, requestId } = await api.simulateCapsule({
+      text,
+      capsule_id: capsule?.id,
+    });
     const summary = {
       title: capsule?.id || 'Ad-hoc simulation',
-      summary: (result.plan || []).join(' → '),
-      impact: `${result.expected_impact?.economy ?? 0} economy / ${result.expected_impact?.environment ?? 0} env`,
-      risk: (result.risks || []).join(', ') || 'low',
-      riskScore: result.risks?.length || 0,
+      summary: (simulation.plan || []).join(' → '),
+      impact: `${simulation.expected_impact?.economy ?? 0} economy / ${simulation.expected_impact?.environment ?? 0} env`,
+      risk: (simulation.risks || []).join(', ') || 'low',
+      riskScore: simulation.risks?.length || 0,
       cost: '$0.00',
       timestamp: new Date().toISOString(),
     };
     appState.simulations.push(summary);
     renderSimulations();
-    toast('Simulation complete', { runId: `sim-${Date.now()}` });
-    ui.actions.output.innerHTML = `<div class="badge-chip success">SIMULATED</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+    toast('Simulation complete', { runId: requestId || `sim-${Date.now()}` });
+    ui.actions.output.innerHTML = `<div class="badge-chip success">SIMULATED</div><pre>${JSON.stringify(simulation, null, 2)}</pre>`;
     if (capsule?.id) {
       const meta = appState.capsuleMeta.get(capsule.id) || {};
       meta.lastRun = new Date().toISOString();
@@ -1062,25 +1256,33 @@ async function triggerSimulation(capsule) {
       appState.capsuleMeta.set(capsule.id, meta);
       renderCapsuleTable();
     }
-    return result;
+    eventBus.dispatchEvent(
+      new CustomEvent('simulation-completed', { detail: { simulation, requestId } }),
+    );
+    return simulation;
   } catch (error) {
     toast(`Simulation failed: ${error.error || error.message || error}`);
     ui.actions.output.innerHTML = `<div class="badge-chip fail">FAILED</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
-    return null;
+    throw error;
   }
 }
 
 async function triggerLearning() {
   try {
-    const result = await api.runLearning({ metrics: { capsules: appState.capsules.length } });
-    toast('Learning step recorded', { runId: result.version });
+    const { data: learning, requestId } = await api.runLearning({
+      metrics: { capsules: appState.capsules.length },
+    });
+    toast('Learning step recorded', { runId: learning.version || requestId });
     await refreshLearning();
-    ui.actions.output.innerHTML = `<div class="badge-chip success">LEARNING</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
-    return result;
+    ui.actions.output.innerHTML = `<div class="badge-chip success">LEARNING</div><pre>${JSON.stringify(learning, null, 2)}</pre>`;
+    eventBus.dispatchEvent(
+      new CustomEvent('learning-step', { detail: { learning, requestId } }),
+    );
+    return learning;
   } catch (error) {
     toast(`Learning failed: ${error.error || error.message || error}`);
     ui.actions.output.innerHTML = `<div class="badge-chip warn">NEEDS INPUT</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
-    return null;
+    throw error;
   }
 }
 
@@ -1091,19 +1293,34 @@ async function triggerUpgrade() {
     return;
   }
   try {
-    const result = await api.proposeUpgrade({ text, metadata: { source: ui.actions.source.value || 'operator' } });
-    toast(result.accepted ? 'Upgrade accepted' : 'Upgrade recorded', { runId: `upgrade-${Date.now()}` });
-    ui.actions.output.innerHTML = `<div class="badge-chip ${result.accepted ? 'success' : 'warn'}">${result.accepted ? 'ACCEPTED' : 'REVIEW'}</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+    const { data: upgrade, requestId } = await api.proposeUpgrade({
+      text,
+      metadata: { source: ui.actions.source.value || 'operator' },
+    });
+    toast(upgrade.accepted ? 'Upgrade accepted' : 'Upgrade recorded', {
+      runId: requestId || `upgrade-${Date.now()}`,
+    });
+    ui.actions.output.innerHTML = `<div class="badge-chip ${upgrade.accepted ? 'success' : 'warn'}">${upgrade.accepted ? 'ACCEPTED' : 'REVIEW'}</div><pre>${JSON.stringify(upgrade, null, 2)}</pre>`;
+    eventBus.dispatchEvent(
+      new CustomEvent('upgrade-recorded', { detail: { upgrade, requestId } }),
+    );
+    return upgrade;
   } catch (error) {
     toast(`Upgrade failed: ${error.error || error.message || error}`);
     ui.actions.output.innerHTML = `<div class="badge-chip fail">FAILED</div><pre>${JSON.stringify(error, null, 2)}</pre>`;
+    throw error;
   }
 }
 
 async function triggerDryRun() {
-  const result = await triggerSimulation({ text: buildCapsuleText() });
-  if (result) {
-    ui.actions.output.innerHTML = `<div class="badge-chip success">DRY-RUN</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+  try {
+    const result = await triggerSimulation({ text: buildCapsuleText() });
+    if (result) {
+      ui.actions.output.innerHTML = `<div class="badge-chip success">DRY-RUN</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+    }
+    return result;
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -1112,13 +1329,16 @@ async function processResearchItem(item) {
   item.status = 'running';
   renderResearch();
   try {
-    const result = await api.runResearch({ query: item.topic });
+    const { data: research, requestId } = await api.runResearch({ query: item.topic });
     item.status = 'done';
-    item.summary = (result.insights || []).map((entry) => entry.summary).join('\n');
+    item.summary = (research.insights || []).map((entry) => entry.summary).join('\n');
     appState.researchHistory.push({ topic: item.topic, summary: item.summary, timestamp: new Date().toISOString() });
     appState.researchQueue = appState.researchQueue.filter((queueItem) => queueItem !== item);
     renderResearch();
-    toast(`Research complete for ${item.topic}`, { runId: `research-${Date.now()}` });
+    toast(`Research complete for ${item.topic}`, { runId: requestId || `research-${Date.now()}` });
+    eventBus.dispatchEvent(
+      new CustomEvent('research-completed', { detail: { research, requestId } }),
+    );
   } catch (error) {
     item.status = 'fail';
     item.summary = error.error || error.message || 'Failed';
@@ -1142,7 +1362,7 @@ function storePreset() {
   };
   appState.presets = [...appState.presets.slice(-9), preset];
   renderPresets();
-  persistPreferences({ presets: appState.presets });
+  writePresets(appState.presets);
   toast('Preset saved', { runId: preset.id });
 }
 
@@ -1218,6 +1438,36 @@ function setActiveSection(sectionId) {
   });
 }
 
+function setButtonBusy(button, busy) {
+  if (!button) return;
+  button.classList.toggle('is-loading', busy);
+  button.disabled = busy;
+  if (busy) {
+    button.setAttribute('aria-busy', 'true');
+  } else {
+    button.removeAttribute('aria-busy');
+  }
+}
+
+function bindAction(button, handler) {
+  if (!button) return;
+  button.addEventListener('click', async () => {
+    if (button.disabled) return;
+    setButtonBusy(button, true);
+    button.classList.remove('state-success', 'state-error');
+    try {
+      await handler();
+      button.classList.add('state-success');
+      setTimeout(() => button.classList.remove('state-success'), 1200);
+    } catch (error) {
+      button.classList.add('state-error');
+      setTimeout(() => button.classList.remove('state-error'), 1600);
+    } finally {
+      setButtonBusy(button, false);
+    }
+  });
+}
+
 function initEvents() {
   ui.actions.instruction.addEventListener('input', (event) => setInstruction(event.target.value));
   ui.actions.context.addEventListener('input', (event) => setContext(event.target.value));
@@ -1279,28 +1529,62 @@ function initEvents() {
   });
   ui.commandPalette.input.addEventListener('input', (event) => populateCommandResults(event.target.value));
   ui.commandPalette.close.addEventListener('click', closeCommandPalette);
-  ui.primaryActions.save.addEventListener('click', triggerSave);
-  ui.primaryActions.analyze.addEventListener('click', () => triggerAnalyze());
-  ui.primaryActions.simulate.addEventListener('click', () => triggerSimulation());
-  ui.primaryActions.learning.addEventListener('click', () => triggerLearning());
-  ui.primaryActions.upgrade.addEventListener('click', () => triggerUpgrade());
-  ui.primaryActions.dryrun.addEventListener('click', () => triggerDryRun());
+  bindAction(ui.primaryActions.save, () => triggerSave());
+  bindAction(ui.primaryActions.analyze, () => triggerAnalyze());
+  bindAction(ui.primaryActions.simulate, () => triggerSimulation());
+  bindAction(ui.primaryActions.learning, () => triggerLearning());
+  bindAction(ui.primaryActions.upgrade, () => triggerUpgrade());
+  bindAction(ui.primaryActions.dryrun, () => triggerDryRun());
   $('#preset-save').addEventListener('click', storePreset);
-  Object.values(ui.chips).forEach((chip) => {
+  const chipLabels = {
+    analyze: 'Auto Analyze',
+    simulate: 'Auto Simulate',
+    learning: 'Auto Learning',
+    research: 'Auto Explore',
+    insights: 'Auto Reflect',
+  };
+  Object.entries(ui.chips).forEach(([key, chip]) => {
     if (!chip) return;
-    chip.addEventListener('change', () => {
-      renderActionKPIs();
-      processAutoLoops();
-      persistPreferences();
+    chip.addEventListener('change', async (event) => {
+      const value = event.target.checked;
+      chip.disabled = true;
+      chip.setAttribute('aria-busy', 'true');
+      try {
+        await settingsStore.setToggle(key, value);
+        renderActionKPIs();
+        processAutoLoops();
+        toast(`${chipLabels[key] || key} ${value ? 'enabled' : 'disabled'}`, {
+          runId: `toggle-${key}-${Date.now()}`,
+        });
+      } catch (error) {
+        chip.checked = !value;
+        toast(`Toggle update failed: ${error.error || error.message || error}`, {
+          runId: `toggle-${key}-${Date.now()}`,
+        });
+      } finally {
+        chip.disabled = false;
+        chip.removeAttribute('aria-busy');
+      }
     });
   });
   ui.refreshButton.addEventListener('click', async () => {
     await refreshStatus();
     await refreshCapsules();
   });
-  ui.autoRefresh.addEventListener('change', (event) => {
-    appState.autoRefresh = event.target.checked;
-    persistPreferences();
+  ui.autoRefresh.addEventListener('change', async (event) => {
+    const value = event.target.checked;
+    ui.autoRefresh.disabled = true;
+    try {
+      await settingsStore.setAutoRefresh(value);
+      toast(`Auto refresh ${value ? 'enabled' : 'paused'}`, {
+        runId: `refresh-${Date.now()}`,
+      });
+    } catch (error) {
+      event.target.checked = !value;
+      toast(`Auto refresh update failed: ${error.error || error.message || error}`);
+    } finally {
+      ui.autoRefresh.disabled = false;
+    }
   });
   ui.quickChecks.toggle.addEventListener('click', () => {
     const expanded = ui.quickChecks.toggle.getAttribute('aria-expanded') === 'true';
@@ -1312,8 +1596,11 @@ function initEvents() {
     const token = prompt('Enter admin token to engage kill switch');
     if (!token) return;
     try {
-      const result = await api.killSwitch(token);
-      toast(`Kill switch ${result.status}`);
+      const { data, requestId } = await api.killSwitch(token);
+      toast(`Kill switch ${data.status}`, { runId: requestId || `kill-${Date.now()}` });
+      eventBus.dispatchEvent(
+        new CustomEvent('kill-switch-engaged', { detail: { status: data.status, requestId } }),
+      );
       await refreshStatus();
     } catch (error) {
       toast(`Kill switch failed: ${error.error || error.message || error}`);
@@ -1389,7 +1676,10 @@ function initEvents() {
 }
 
 async function bootstrap() {
-  hydratePreferences();
+  hydratePresets();
+  if (ui.loading) ui.loading.hidden = false;
+  document.body.classList.add('is-hydrating');
+  await settingsStore.hydrate();
   initEvents();
   processAutoLoops();
   await refreshStatus();
@@ -1404,12 +1694,9 @@ async function bootstrap() {
   renderPresets();
   setInstruction('');
   setContext('');
-  if (appState.autoRefresh) {
-    setInterval(async () => {
-      if (!appState.autoRefresh) return;
-      await refreshStatus();
-    }, 15_000);
-  }
+  document.body.classList.remove('is-hydrating');
+  if (ui.loading) ui.loading.hidden = true;
+  manageStatusPolling(appState.autoRefresh);
 }
 
 window.GaiaDashboard = {
@@ -1437,14 +1724,16 @@ window.GaiaDashboard = {
     const capsule = appState.capsules.find((item) => item.id === id);
     if (!capsule) return Promise.reject(new Error('Capsule not found'));
     if (options.dryRun) {
-      return api.simulateCapsule({ text: capsule.text, capsule_id: capsule.id });
+      return api.simulateCapsule({ text: capsule.text, capsule_id: capsule.id }).then((result) => result.data);
     }
     return triggerSimulation(capsule);
   },
   listSimulations() {
     return [...appState.simulations];
   },
-  startSimulation: api.simulateCapsule,
+  startSimulation(params) {
+    return api.simulateCapsule(params).then((result) => result.data);
+  },
   listInsights(params = {}) {
     const severity = params.severity;
     if (!severity) return [...appState.insights];
@@ -1464,6 +1753,35 @@ window.GaiaDashboard = {
     const type = params.type || 'json';
     return api.exportCapsules(type);
   },
+  bus: eventBus,
 };
+
+eventBus.addEventListener('capsule-saved', async () => {
+  await refreshStatus();
+  await refreshQuickChecks();
+});
+
+eventBus.addEventListener('simulation-completed', async () => {
+  await refreshStatus();
+  await refreshQuickChecks();
+});
+
+eventBus.addEventListener('learning-step', async () => {
+  await refreshStatus();
+  await refreshLearning();
+});
+
+eventBus.addEventListener('research-completed', async () => {
+  await refreshInsights();
+});
+
+eventBus.addEventListener('upgrade-recorded', async () => {
+  await refreshStatus();
+});
+
+eventBus.addEventListener('kill-switch-engaged', async () => {
+  await refreshStatus();
+  await refreshQuickChecks();
+});
 
 document.addEventListener('DOMContentLoaded', bootstrap);

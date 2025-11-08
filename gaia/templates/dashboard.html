@@ -7,6 +7,10 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body class="app" data-environment="{{ environment | default('Dev') }}">
+  <div id="app-loading" class="app-loading" role="status" aria-live="assertive">
+    <div class="loading-spinner" aria-hidden="true"></div>
+    <p>Loading dashboard settings…</p>
+  </div>
   <div id="toast-root" aria-live="polite" aria-atomic="true" class="toast-root"></div>
   <div id="search-modal" class="command-palette" aria-hidden="true" role="dialog" aria-modal="true">
     <div class="command-surface">
@@ -393,6 +397,7 @@
     </div>
   </template>
 
+  <script src="{{ url_for('static', filename='lib/api.js') }}" defer></script>
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </body>
 </html>

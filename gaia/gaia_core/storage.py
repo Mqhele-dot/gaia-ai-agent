@@ -16,6 +16,18 @@ MODELS_DIR = DATA_DIR / "models"
 ACTIVITY_LOG = LOG_DIR / "activity.jsonl"
 UPGRADE_LEDGER = DATA_DIR / "upgrades_ledger.jsonl"
 STATE_FILE = DATA_DIR / "state.json"
+SETTINGS_FILE = DATA_DIR / "settings.json"
+
+DEFAULT_SETTINGS = {
+    "auto_refresh": True,
+    "toggles": {
+        "analyze": False,
+        "simulate": False,
+        "learning": False,
+        "research": False,
+        "insights": False,
+    },
+}
 
 for path in (CAPSULE_DIR, LOG_DIR, MODELS_DIR):
     path.mkdir(parents=True, exist_ok=True)
@@ -112,6 +124,56 @@ def save_state(state: Dict[str, object]) -> None:
     _atomic_write(STATE_FILE, payload)
 
 
+def load_settings() -> Dict[str, object]:
+    """Load dashboard settings with defaults."""
+
+    if not SETTINGS_FILE.exists():
+        return {
+            "auto_refresh": DEFAULT_SETTINGS["auto_refresh"],
+            "toggles": dict(DEFAULT_SETTINGS["toggles"]),
+        }
+    try:
+        with SETTINGS_FILE.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except json.JSONDecodeError:
+        return {
+            "auto_refresh": DEFAULT_SETTINGS["auto_refresh"],
+            "toggles": dict(DEFAULT_SETTINGS["toggles"]),
+        }
+
+    toggles = dict(DEFAULT_SETTINGS["toggles"])
+    incoming = data.get("toggles")
+    if isinstance(incoming, dict):
+        for key in toggles:
+            if key in incoming:
+                toggles[key] = bool(incoming[key])
+
+    auto_refresh = data.get("auto_refresh")
+    if not isinstance(auto_refresh, bool):
+        auto_refresh = DEFAULT_SETTINGS["auto_refresh"]
+
+    return {"auto_refresh": auto_refresh, "toggles": toggles}
+
+
+def save_settings(settings: Dict[str, object]) -> Dict[str, object]:
+    """Persist dashboard settings safely."""
+
+    toggles = dict(DEFAULT_SETTINGS["toggles"])
+    incoming_toggles = settings.get("toggles")
+    if isinstance(incoming_toggles, dict):
+        for key in toggles:
+            if key in incoming_toggles:
+                toggles[key] = bool(incoming_toggles[key])
+
+    auto_refresh = settings.get("auto_refresh")
+    if not isinstance(auto_refresh, bool):
+        auto_refresh = DEFAULT_SETTINGS["auto_refresh"]
+
+    payload = {"auto_refresh": auto_refresh, "toggles": toggles}
+    _atomic_write(SETTINGS_FILE, payload)
+    return payload
+
+
 __all__ = [
     "save_capsule",
     "list_capsules",
@@ -125,4 +187,7 @@ __all__ = [
     "load_state",
     "save_state",
     "record_upgrade_decision",
+    "SETTINGS_FILE",
+    "load_settings",
+    "save_settings",
 ]

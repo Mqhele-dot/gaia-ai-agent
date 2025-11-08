@@ -161,3 +161,25 @@ def test_quick_checks_endpoint(client):
     assert "checks" in payload
     assert payload["summary"]["passed"] >= 0
     assert any(check["id"] == "api_reachability" for check in payload["checks"])
+
+
+def test_settings_round_trip(client):
+    initial = client.get("/settings")
+    assert initial.status_code == 200
+    payload = initial.get_json()
+    assert "toggles" in payload
+    assert "auto_refresh" in payload
+
+    update = client.patch(
+        "/settings",
+        json={"auto_refresh": False, "toggles": {"analyze": True, "simulate": True}},
+    )
+    assert update.status_code == 200
+    patched = update.get_json()
+    assert patched["auto_refresh"] is False
+    assert patched["toggles"]["analyze"] is True
+    assert patched["toggles"]["simulate"] is True
+
+    refreshed = client.get("/settings").get_json()
+    assert refreshed["toggles"]["analyze"] is True
+    assert refreshed["auto_refresh"] is False

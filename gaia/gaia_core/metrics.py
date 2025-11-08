@@ -30,6 +30,8 @@ ACTION_LABELS = {
     "version_set": "Version updated",
     "system_halted": "System halted",
     "system_resumed": "System resumed",
+    "settings_view": "Settings viewed",
+    "settings_update": "Settings updated",
 }
 
 

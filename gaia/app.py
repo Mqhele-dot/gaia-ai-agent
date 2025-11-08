@@ -34,8 +34,10 @@ from gaia.gaia_core.storage import (
     ACTIVITY_LOG,
     append_log,
     list_capsules,
+    load_settings,
     load_state,
     save_capsule,
+    save_settings,
     save_state,
 )
 from gaia.gaia_core.research import explore_science
@@ -58,6 +60,8 @@ tracker().set_version(HEALTH_VERSION)
 _runtime_state = load_state()
 if _runtime_state.get("halted"):
     tracker().set_halted(True)
+
+_settings_state = load_settings()
 
 _learning_history = load_learning_history()
 if _learning_history:
@@ -363,6 +367,48 @@ def index() -> str:
         "dashboard.html",
         environment=ENVIRONMENT_LABEL,
     )
+
+
+@app.route("/settings", methods=["GET", "PATCH"])
+def settings() -> Response:
+    start = time.time()
+    global _settings_state  # noqa: PLW0603
+
+    if request.method == "GET":
+        payload = load_settings()
+        _settings_state = payload
+        _record_event(
+            "settings_view",
+            start,
+            log_payload={"event": "settings_view", "settings": payload},
+            summary="Settings viewed",
+        )
+        return jsonify(payload)
+
+    body = request.get_json(silent=True) or {}
+    toggles = body.get("toggles") if isinstance(body.get("toggles"), dict) else {}
+    auto_refresh = body.get("auto_refresh")
+
+    merged = {
+        "auto_refresh": bool(auto_refresh)
+        if isinstance(auto_refresh, bool)
+        else _settings_state.get("auto_refresh", True),
+        "toggles": {**_settings_state.get("toggles", {})},
+    }
+
+    for key, value in toggles.items():
+        if key in merged["toggles"]:
+            merged["toggles"][key] = bool(value)
+
+    saved = save_settings(merged)
+    _settings_state = saved
+    _record_event(
+        "settings_update",
+        start,
+        log_payload={"event": "settings_update", "settings": saved},
+        summary="Settings updated",
+    )
+    return jsonify(saved)
 
 
 @app.route("/status")
