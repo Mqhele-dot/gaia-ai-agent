@@ -366,6 +366,13 @@
           </select>
           <button id="log-download" class="ghost">Download segment</button>
         </div>
+        <div class="activity-panel">
+          <div class="activity-header">
+            <h3>Recent activity</h3>
+            <span id="activity-count" class="pill">0</span>
+          </div>
+          <div id="activity-list" class="activity-list" role="list"></div>
+        </div>
         <div id="log-stream" class="log-stream" aria-live="polite"></div>
       </section>
 
@@ -397,7 +404,7 @@
     </div>
   </template>
 
-  <script src="{{ url_for('static', filename='lib/api.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='api.js') }}" defer></script>
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </body>
 </html>

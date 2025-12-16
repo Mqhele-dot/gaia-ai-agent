@@ -1,6 +1,73 @@
 const $ = (selector, scope = document) => scope.querySelector(selector);
 const $$ = (selector, scope = document) => Array.from(scope.querySelectorAll(selector));
 
+(function ensureGaiaApi() {
+  if (window.GaiaApi) return;
+
+  const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+  async function fetchWithRetry(method, path, options = {}) {
+    const {
+      body,
+      headers = {},
+      retries = 2,
+      retryDelay = 300,
+    } = options;
+
+    const requestId = `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const finalHeaders = { Accept: 'application/json', ...headers };
+    let payload = body;
+
+    if (body && !(body instanceof FormData) && !finalHeaders['Content-Type']) {
+      finalHeaders['Content-Type'] = 'application/json';
+      payload = JSON.stringify(body);
+    }
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        const response = await fetch(path, { method, headers: finalHeaders, body: payload, cache: 'no-store' });
+        const contentType = response.headers.get('Content-Type') || '';
+        let data = null;
+        if (contentType.includes('application/json')) {
+          try {
+            data = await response.json();
+          } catch (err) {
+            data = await response.text();
+          }
+        } else {
+          data = await response.text();
+        }
+        if (!response.ok && RETRYABLE_STATUS.has(response.status) && attempt < retries) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelay * (attempt + 1)));
+          continue;
+        }
+        return { ok: response.ok, status: response.status, data, requestId, error: response.ok ? null : data };
+      } catch (error) {
+        if (attempt >= retries) {
+          return { ok: false, status: 0, error: error || { error: 'Network failure' }, requestId };
+        }
+        await new Promise((resolve) => setTimeout(resolve, retryDelay * (attempt + 1)));
+      }
+    }
+    return { ok: false, status: 0, error: { error: 'Request failed' }, requestId };
+  }
+
+  window.GaiaApi = {
+    request(method, path, options) {
+      return fetchWithRetry(method, path, options);
+    },
+    get(path, options) {
+      return fetchWithRetry('GET', path, options);
+    },
+    post(path, body, options = {}) {
+      return fetchWithRetry('POST', path, { ...options, body });
+    },
+    patch(path, body, options = {}) {
+      return fetchWithRetry('PATCH', path, { ...options, body });
+    },
+  };
+})();
+
 const PRESETS_KEY = 'gaia-dashboard-presets-v1';
 
 const appState = {
@@ -18,6 +85,7 @@ const appState = {
   insights: [],
   simulations: [],
   logs: [],
+  activity: [],
   exports: [],
   presets: [],
   autoRefresh: true,
@@ -41,10 +109,11 @@ function manageStatusPolling(enabled) {
       if (!appState.autoRefresh) return;
       try {
         await refreshStatus();
+        await refreshActivity();
       } catch (error) {
         console.warn('Auto refresh failed', error);
       }
-    }, 15_000);
+    }, 8_000);
   }
 }
 
@@ -321,6 +390,10 @@ const api = {
     const result = await getApiClient().get('/export/logs', { retries: 1, retryDelay: 300 });
     return ensureSuccess(result).data;
   },
+  async fetchActivity(limit = 50) {
+    const result = await getApiClient().get(`/activity/recent?limit=${limit}`, { retries: 1, retryDelay: 300 });
+    return ensureSuccess(result).data;
+  },
   async exportCapsules(format) {
     const result = await getApiClient().get(`/export/capsules?fmt=${format}`, {
       retries: 1,
@@ -343,6 +416,14 @@ const api = {
     );
     const success = ensureSuccess(result);
     return { data: success.data, requestId: success.requestId };
+  },
+  async autonomyStatus() {
+    const result = await getApiClient().get('/autonomy/status', { retries: 1, retryDelay: 300 });
+    return ensureSuccess(result).data;
+  },
+  async autonomyRunOnce() {
+    const result = await getApiClient().post('/autonomy/run-once', {}, { retries: 0 });
+    return ensureSuccess(result).data;
   },
 };
 
@@ -373,6 +454,10 @@ const ui = {
     trendVersion: $('#trend-version'),
     haltedBanner: $('#halted-banner'),
     environment: $('#status-environment'),
+  },
+  activity: {
+    list: $('#activity-list'),
+    count: $('#activity-count'),
   },
   actions: {
     instruction: $('#capsule-instruction'),
@@ -1012,6 +1097,32 @@ function renderLogs(text) {
   applyLogFilter();
 }
 
+function renderActivity(events = []) {
+  appState.activity = events;
+  if (!ui.activity.list) return;
+  ui.activity.list.innerHTML = '';
+  if (!events.length) {
+    ui.activity.list.innerHTML = '<div class="empty-state small">No recent activity</div>';
+  } else {
+    events
+      .slice(-50)
+      .reverse()
+      .forEach((event) => {
+        const item = document.createElement('div');
+        item.className = 'activity-item';
+        const ts = event.ts ? new Date(event.ts).toLocaleTimeString() : '';
+        item.innerHTML = `
+          <div class="activity-meta"><span class="pill">${event.event || 'event'}</span><span class="muted">${ts}</span></div>
+          <div class="activity-body">${event.summary || event.message || ''}</div>
+        `;
+        ui.activity.list.appendChild(item);
+      });
+  }
+  if (ui.activity.count) {
+    ui.activity.count.textContent = events.length.toString();
+  }
+}
+
 function applyLogFilter() {
   const level = ui.logs.level ? ui.logs.level.value : 'all';
   const entries = (appState.logsRaw || []).filter((entry) => {
@@ -1132,9 +1243,19 @@ async function refreshLearning() {
 async function refreshLogs() {
   try {
     const text = await api.fetchLogs();
-    renderLogs(text);
+    const raw = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
+    renderLogs(raw);
   } catch (error) {
     toast(`Log stream failed: ${error.error || error.message || error}`);
+  }
+}
+
+async function refreshActivity() {
+  try {
+    const payload = await api.fetchActivity(50);
+    renderActivity(payload.events || []);
+  } catch (error) {
+    toast(`Activity fetch failed: ${error.error || error.message || error}`);
   }
 }
 
@@ -1569,6 +1690,7 @@ function initEvents() {
   });
   ui.refreshButton.addEventListener('click', async () => {
     await refreshStatus();
+    await refreshActivity();
     await refreshCapsules();
   });
   ui.autoRefresh.addEventListener('change', async (event) => {
@@ -1683,6 +1805,7 @@ async function bootstrap() {
   initEvents();
   processAutoLoops();
   await refreshStatus();
+  await refreshActivity();
   await refreshCapsules();
   await refreshQuickChecks();
   await refreshInsights();
@@ -1720,6 +1843,13 @@ window.GaiaDashboard = {
   getCapsule(id) {
     return appState.capsules.find((capsule) => capsule.id === id);
   },
+  listActivity(params = {}) {
+    const limit = params.limit || 50;
+    return appState.activity.slice(-limit);
+  },
+  fetchActivity: api.fetchActivity,
+  autonomyStatus: api.autonomyStatus,
+  autonomyRunOnce: api.autonomyRunOnce,
   runCapsule(id, options = {}) {
     const capsule = appState.capsules.find((item) => item.id === id);
     if (!capsule) return Promise.reject(new Error('Capsule not found'));

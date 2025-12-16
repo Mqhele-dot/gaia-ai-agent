@@ -80,6 +80,14 @@ class AutonomyManager:
         thread = self._thread
         return bool(thread and thread.is_alive())
 
+    def status(self) -> Dict[str, object]:
+        return {
+            "running": self.is_running(),
+            "interval_s": self._interval,
+            "cycles": self._cycle_count,
+            "recent_titles": list(self._recent_titles),
+        }
+
     def run_cycle_once(self) -> None:
         self._execute_cycle()
 

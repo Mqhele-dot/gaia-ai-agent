@@ -554,6 +554,8 @@ button.state-error {
 .content {
   padding: 24px;
   overflow-y: auto;
+  display: grid;
+  gap: 24px;
 }
 
 .content-section {
@@ -565,6 +567,11 @@ button.state-error {
 
 .content-section.active {
   display: flex;
+}
+
+canvas {
+  max-width: 100%;
+  height: auto;
 }
 
 .section-header {
@@ -752,7 +759,9 @@ button.state-error {
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
+  overflow-x: auto;
   box-shadow: var(--shadow);
+  display: block;
 }
 
 .table-head {
@@ -918,6 +927,51 @@ button.state-error {
   border-radius: 16px;
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.activity-panel {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.activity-list {
+  display: grid;
+  gap: 8px;
+  max-height: 200px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.activity-item {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.activity-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.activity-body {
+  font-size: 0.9rem;
+  color: var(--muted);
 }
 
 .log-line pre {

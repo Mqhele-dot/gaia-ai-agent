@@ -81,6 +81,12 @@ if _learning_history:
 AUTONOMY_MANAGER = AutonomyManager.bootstrap()
 
 
+@app.before_request
+def _ensure_autonomy_running() -> None:
+    if AUTONOMY_MANAGER and not AUTONOMY_MANAGER.is_running():
+        AUTONOMY_MANAGER.start()
+
+
 def _record_event(
     action: str,
     start_time: float,
@@ -437,6 +443,53 @@ def status() -> Response:
     return jsonify(enriched)
 
 
+@app.route("/activity/recent")
+def activity_recent() -> Response:
+    start = time.time()
+    try:
+        limit = int(request.args.get("limit", 50))
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 500))
+    events = _recent_activity(limit=limit)
+    _record_event(
+        "activity_recent",
+        start,
+        log_payload={"event": "activity_recent", "count": len(events)},
+        summary="Recent activity requested",
+    )
+    return jsonify({"events": events})
+
+
+@app.route("/autonomy/status")
+def autonomy_status() -> Response:
+    start = time.time()
+    status_payload = AUTONOMY_MANAGER.status() if AUTONOMY_MANAGER else {}
+    _record_event(
+        "autonomy_status",
+        start,
+        log_payload={"event": "autonomy_status", "running": status_payload.get("running")},
+        summary="Autonomy status",
+    )
+    return jsonify(status_payload)
+
+
+@app.route("/autonomy/run-once", methods=["POST"])
+def autonomy_run_once() -> Response:
+    start = time.time()
+    if not AUTONOMY_MANAGER:
+        return jsonify({"error": "Autonomy manager unavailable"}), 503
+    AUTONOMY_MANAGER.run_cycle_once()
+    status_payload = AUTONOMY_MANAGER.status()
+    _record_event(
+        "autonomy_run_once",
+        start,
+        log_payload={"event": "autonomy_run_once"},
+        summary="Autonomy cycle run manually",
+    )
+    return jsonify(status_payload)
+
+
 @app.route("/capsules/save", methods=["POST"])
 def capsules_save() -> Response:
     start = time.time()
@@ -697,7 +750,7 @@ def insights_reflect() -> Response:
     return jsonify(insights)
 
 
-@app.route("/research/explore")
+@app.route("/research/explore", methods=["GET", "POST"])
 def research_explore() -> Response:
     start = time.time()
     if tracker().is_halted():
@@ -709,7 +762,9 @@ def research_explore() -> Response:
         )
         return jsonify({"error": "System halted. Research exploration paused."}), 423
 
-    query = request.args.get("q", "").strip()
+    payload = request.get_json(silent=True) or {}
+    query = request.args.get("q", "") or payload.get("query", "")
+    query = str(query).strip()
     if not query:
         _record_event(
             "research_explore",
