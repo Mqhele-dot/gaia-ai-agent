@@ -374,7 +374,18 @@ const api = {
     return { data: success.data, requestId: success.requestId };
   },
   async runResearch(payload) {
-    const result = await getApiClient().post('/research/explore', payload, { retries: 2, retryDelay: 400 });
+    const query = typeof payload === 'string' ? payload : payload?.query;
+    const hasQuery = query && query.trim().length > 0;
+    const path = hasQuery
+      ? `/research/explore?q=${encodeURIComponent(query.trim())}`
+      : '/research/explore';
+
+    // Prefer GET for compatibility; fallback to POST if no query in path
+    const request = hasQuery
+      ? getApiClient().get(path, { retries: 2, retryDelay: 400 })
+      : getApiClient().post('/research/explore', payload || {}, { retries: 2, retryDelay: 400 });
+
+    const result = await request;
     const success = ensureSuccess(result);
     return { data: success.data, requestId: success.requestId };
   },
@@ -388,7 +399,13 @@ const api = {
   },
   async fetchLogs() {
     const result = await getApiClient().get('/export/logs', { retries: 1, retryDelay: 300 });
-    return ensureSuccess(result).data;
+    const success = ensureSuccess(result);
+    const payload = success.data;
+    if (payload instanceof Blob) {
+      return await payload.text();
+    }
+    if (typeof payload === 'string') return payload;
+    return JSON.stringify(payload, null, 2);
   },
   async fetchActivity(limit = 50) {
     const result = await getApiClient().get(`/activity/recent?limit=${limit}`, { retries: 1, retryDelay: 300 });
@@ -1452,7 +1469,8 @@ async function processResearchItem(item) {
   try {
     const { data: research, requestId } = await api.runResearch({ query: item.topic });
     item.status = 'done';
-    item.summary = (research.insights || []).map((entry) => entry.summary).join('\n');
+    const entries = research.results || research.insights || [];
+    item.summary = entries.map((entry) => entry.summary || entry.title || '').join('\n');
     appState.researchHistory.push({ topic: item.topic, summary: item.summary, timestamp: new Date().toISOString() });
     appState.researchQueue = appState.researchQueue.filter((queueItem) => queueItem !== item);
     renderResearch();

@@ -835,7 +835,8 @@ canvas {
   right: -420px;
   width: 420px;
   bottom: 24px;
-  background: rgba(17, 21, 31, 0.96);
+  background: var(--bg-surface);
+  color: var(--text);
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow);
   border-top-left-radius: 18px;
@@ -1062,8 +1063,9 @@ canvas {
   gap: 8px;
   padding: 10px 14px;
   border-radius: 12px;
-  background: rgba(17, 21, 31, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow);
 }
 
@@ -1156,10 +1158,11 @@ canvas {
 .side-drawer,
 .right-panel,
 #drawer,
-#errorsPanel {
-  background: rgba(255, 255, 255, 0.96) !important;
-  color: #0f172a !important;
-  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+#errorsPanel,
+.toast {
+  background: var(--bg-surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25) !important;
   backdrop-filter: blur(10px);
 }
@@ -1169,7 +1172,8 @@ canvas {
 .side-drawer * ,
 .right-panel * ,
 #drawer * ,
-#errorsPanel * {
+#errorsPanel * ,
+.toast * {
   color: inherit;
 }
 
