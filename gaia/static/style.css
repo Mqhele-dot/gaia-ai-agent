@@ -853,6 +853,33 @@ canvas {
   right: 24px;
 }
 
+.details-drawer p {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 6px;
+  align-items: baseline;
+  color: var(--text);
+}
+
+.details-drawer p + p {
+  margin-top: 6px;
+}
+
+.details-drawer pre {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--bg-elevated, var(--bg-surface));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+  font-family: var(--mono, 'JetBrains Mono', 'SFMono-Regular', Menlo, monospace);
+  line-height: 1.4;
+}
+
 .drawer-close {
   align-self: flex-end;
   background: rgba(255, 255, 255, 0.08);

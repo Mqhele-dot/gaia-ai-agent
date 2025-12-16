@@ -941,7 +941,7 @@ function openCapsuleDrawer(id) {
   const heading = document.createElement('h4');
   heading.textContent = 'Text';
   const pre = document.createElement('pre');
-  pre.textContent = capsule.text;
+  pre.textContent = capsule.text || 'No text provided.';
   ui.capsuleTable.drawerContent.append(heading, pre);
   ui.capsuleTable.drawer.setAttribute('aria-hidden', 'false');
 }
