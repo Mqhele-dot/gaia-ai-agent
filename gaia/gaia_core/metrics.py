@@ -24,6 +24,8 @@ ACTION_LABELS = {
     "export_capsules": "Capsules exported",
     "export_capsules_failed": "Capsule export failed",
     "export_logs": "Logs exported",
+    "export_research": "Research exported",
+    "export_progress": "Progress exported",
     "research_explore": "Scientific research explored",
     "learning_history": "Learning history viewed",
     "insight_reflect": "Strategic insight generated",

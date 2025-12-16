@@ -20,6 +20,7 @@ from .storage import (
     list_capsules,
     load_settings,
     record_autonomy_event,
+    record_research_entry,
     save_capsule,
 )
 
@@ -142,6 +143,7 @@ class AutonomyManager:
             "source": research.get("source"),
             "result_count": len(results) if isinstance(results, list) else 0,
         }
+        record_research_entry(query, research, version=tracker().get_status().get("version"))
         self._log_event(
             "autonomy_research",
             start=start,

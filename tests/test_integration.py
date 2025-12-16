@@ -148,6 +148,12 @@ def test_research_explore_route(client, monkeypatch):
     assert payload["source"] == "crossref"
     assert calls["count"] == 1
 
+    research_log = client.data_root / "research_log.jsonl"
+    assert research_log.exists()
+    lines = [json.loads(line) for line in research_log.read_text().splitlines() if line.strip()]
+    assert any(entry.get("query") == "solar" for entry in lines)
+    assert all(entry.get("version") for entry in lines)
+
     missing = client.get("/research/explore")
     assert missing.status_code == 400
     assert missing.get_json()["error"]
@@ -161,6 +167,20 @@ def test_quick_checks_endpoint(client):
     assert "checks" in payload
     assert payload["summary"]["passed"] >= 0
     assert any(check["id"] == "api_reachability" for check in payload["checks"])
+
+
+def test_progress_export_and_snapshot(client):
+    first = client.get("/status")
+    assert first.status_code == 200
+    progress_log = client.data_root / "progress_metrics.jsonl"
+    assert progress_log.exists()
+    entries = [json.loads(line) for line in progress_log.read_text().splitlines() if line.strip()]
+    assert entries
+    assert all("metrics" in entry for entry in entries)
+
+    export = client.get("/export/progress")
+    assert export.status_code == 200
+    assert b"ts" in export.data
 
 
 def test_settings_round_trip(client):

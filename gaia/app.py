@@ -37,6 +37,10 @@ from gaia.gaia_core.storage import (
     list_capsules,
     load_settings,
     load_state,
+    PROGRESS_LOG,
+    RESEARCH_LOG,
+    record_progress_snapshot,
+    record_research_entry,
     save_capsule,
     save_settings,
     save_state,
@@ -429,6 +433,7 @@ def status() -> Response:
     enriched["trends"] = trends["deltas"]
     enriched["rates"] = trends["rates"]
     enriched["recent_events"] = trends["recent"]
+    record_progress_snapshot(enriched, reason="status")
     return jsonify(enriched)
 
 
@@ -721,6 +726,7 @@ def research_explore() -> Response:
         "source": research.get("source"),
         "result_count": len(research.get("results", [])),
     }
+    record_research_entry(query, research, version=tracker().get_status().get("version"))
     _record_event(
         "research_explore",
         start,
@@ -767,6 +773,44 @@ def export_logs() -> Response:
         summary="Logs exported",
     )
     return send_file(ACTIVITY_LOG, mimetype="application/json", as_attachment=True, download_name="activity.jsonl")
+
+
+@app.route("/export/research")
+def export_research() -> Response:
+    start = time.time()
+    if not RESEARCH_LOG.exists():
+        RESEARCH_LOG.touch()
+    _record_event(
+        "export_research",
+        start,
+        log_payload={"event": "export_research"},
+        summary="Research log exported",
+    )
+    return send_file(
+        RESEARCH_LOG,
+        mimetype="application/json",
+        as_attachment=True,
+        download_name="research_log.jsonl",
+    )
+
+
+@app.route("/export/progress")
+def export_progress() -> Response:
+    start = time.time()
+    if not PROGRESS_LOG.exists():
+        PROGRESS_LOG.touch()
+    _record_event(
+        "export_progress",
+        start,
+        log_payload={"event": "export_progress"},
+        summary="Progress metrics exported",
+    )
+    return send_file(
+        PROGRESS_LOG,
+        mimetype="application/json",
+        as_attachment=True,
+        download_name="progress_metrics.jsonl",
+    )
 
 
 def _capsules_as_csv(capsules: Iterable[Dict[str, Any]]) -> bytes:

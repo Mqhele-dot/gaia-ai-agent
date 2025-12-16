@@ -10,9 +10,11 @@ pinned: false
 # Gaia Dashboard
 
 Gaia is an ethical, transparent, self-improving assistant focused on delivering
-technology that benefits both the economy and the environment. This repository
-packages a deployable dashboard and JSON-backed API that highlights every
-interaction, exposes runtime metrics, and provides an emergency kill switch.
+technology that benefits both the economy and the environment. Its explicit
+mission is to accelerate climate-positive, high-impact innovation through
+policy-guarded, operator-controlled autonomy. This repository packages a
+deployable dashboard and JSON-backed API that highlights every interaction,
+exposes runtime metrics, and provides an emergency kill switch.
 
 ## Features
 
@@ -279,6 +281,12 @@ decision, ethics score, and notes for long-term auditing.
 Background autonomy runs are mirrored to `gaia/data/autonomy_runs.jsonl` so you
 can audit every research cycle, capsule save, analysis, simulation, learning
 step, and insight produced without operator prompts.
+
+Research exploration is additionally persisted in `gaia/data/research_log.jsonl`
+so operators can inspect sources and summaries, while time-ordered progress
+snapshots are stored in `gaia/data/progress_metrics.jsonl` to track measurable
+improvement over time. Both files can be exported via `/export/research` and
+`/export/progress`.
 
 ## Screenshots
 

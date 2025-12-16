@@ -37,6 +37,8 @@ MODELS_DIR = DATA_DIR / "models"
 AUTONOMY_LOG = DATA_DIR / "autonomy_runs.jsonl"
 ACTIVITY_LOG = LOG_DIR / "activity.jsonl"
 UPGRADE_LEDGER = DATA_DIR / "upgrades_ledger.jsonl"
+RESEARCH_LOG = DATA_DIR / "research_log.jsonl"
+PROGRESS_LOG = DATA_DIR / "progress_metrics.jsonl"
 STATE_FILE = DATA_DIR / "state.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
@@ -134,6 +136,42 @@ def record_autonomy_event(payload: Dict[str, object]) -> None:
     entry = dict(payload)
     entry.setdefault("ts", _timestamp())
     _append_jsonl(AUTONOMY_LOG, entry)
+
+
+def record_research_entry(query: str, research: Dict[str, object], *, version: str | None = None) -> Dict[str, object]:
+    """Persist research results for auditability."""
+
+    entry: Dict[str, object] = {
+        "query": query,
+        "source": research.get("source"),
+        "results": research.get("results", []),
+        "notes": research.get("notes", []),
+        "ts": _timestamp(),
+    }
+    if version:
+        entry["version"] = version
+    _append_jsonl(RESEARCH_LOG, entry)
+    return entry
+
+
+def record_progress_snapshot(status: Dict[str, object], *, reason: str) -> Dict[str, object]:
+    """Store a versioned metrics snapshot to track improvement over time."""
+
+    snapshot = {
+        "ts": _timestamp(),
+        "reason": reason,
+        "metrics": {
+            "uptime_s": status.get("uptime_s"),
+            "version": status.get("version"),
+            "api_calls": status.get("api_calls"),
+            "capsules_processed": status.get("capsules_processed"),
+            "processing_ms_avg": status.get("processing_ms_avg"),
+            "learning_version": status.get("learning_version"),
+            "learning_delta": status.get("learning_delta"),
+        },
+    }
+    _append_jsonl(PROGRESS_LOG, snapshot)
+    return snapshot
 
 
 def load_state() -> Dict[str, object]:
