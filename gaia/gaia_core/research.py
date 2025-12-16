@@ -28,6 +28,17 @@ FALLBACK_INSIGHTS: List[Dict[str, str]] = [
 ]
 
 
+def _fallback_summary(title: str) -> str:
+    """Create a readable summary when no abstract is provided."""
+
+    cleaned_title = title.strip() if title else "this research"
+    base = cleaned_title or "this research"
+    return (
+        f"No abstract provided; based on the title '{base}', the work likely addresses "
+        "responsible or climate-positive technology. Review the source for details."
+    )
+
+
 def _build_entry(item: Dict[str, object]) -> Dict[str, str]:
     title = ""
     if isinstance(item.get("title"), list):
@@ -38,9 +49,11 @@ def _build_entry(item: Dict[str, object]) -> Dict[str, str]:
     abstract = item.get("abstract") or item.get("summary")
     if isinstance(abstract, list):
         abstract = " ".join(map(str, abstract))
+    summary_text = str(abstract).strip() if abstract else _fallback_summary(title)
+
     entry = {
         "title": title or "Untitled research insight",
-        "summary": str(abstract).strip()[:300] if abstract else "Summary unavailable.",
+        "summary": summary_text[:300],
         "url": str(url).strip(),
     }
     doi = item.get("DOI")

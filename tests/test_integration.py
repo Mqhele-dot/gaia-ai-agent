@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from gaia.gaia_core.research import explore_science
+
 
 def test_capsule_flow(client):
     first_status = client.get("/status").get_json()
@@ -173,6 +175,38 @@ def test_research_explore_post(client, monkeypatch):
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["results"]
+
+
+def test_research_fallback_summary(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "message": {
+                    "items": [
+                        {
+                            "title": ["Ethical AI Governance: A Global Blueprint"],
+                            "URL": "https://example.com/blueprint",
+                            # no abstract/summary field to trigger fallback
+                        }
+                    ]
+                }
+            }
+
+    def fake_get(*args, **kwargs):  # noqa: ANN001, ANN002
+        return FakeResponse()
+
+    monkeypatch.setattr("gaia.gaia_core.research.requests.get", fake_get)
+
+    result = explore_science("ethics")
+    assert result["results"]
+    summary = result["results"][0]["summary"]
+    assert summary
+    assert "No abstract provided" in summary
 
 
 def test_activity_recent(client):
