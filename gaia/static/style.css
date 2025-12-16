@@ -1149,3 +1149,77 @@ canvas {
     background: rgba(15, 23, 42, 0.04);
   }
 }
+
+/* === FIX: right-side drawer readability (LIGHT) === */
+.details-drawer,
+.drawer,
+.side-drawer,
+.right-panel,
+#drawer,
+#errorsPanel {
+  background: rgba(255, 255, 255, 0.96) !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25) !important;
+  backdrop-filter: blur(10px);
+}
+
+.details-drawer * ,
+.drawer * ,
+.side-drawer * ,
+.right-panel * ,
+#drawer * ,
+#errorsPanel * {
+  color: inherit;
+}
+
+.details-drawer h1,
+.details-drawer h2,
+.details-drawer h3,
+.drawer h1,
+.drawer h2,
+.drawer h3,
+.side-drawer h1,
+.side-drawer h2,
+.side-drawer h3,
+#drawer h1,
+#drawer h2,
+#drawer h3,
+#errorsPanel h1,
+#errorsPanel h2,
+#errorsPanel h3 {
+  color: #0b1220 !important;
+}
+
+.details-drawer .muted,
+.details-drawer small,
+.details-drawer label,
+.drawer .muted,
+.side-drawer .muted,
+#drawer .muted,
+#errorsPanel .muted {
+  color: #334155 !important;
+}
+
+.details-drawer a,
+.drawer a,
+.side-drawer a,
+#drawer a,
+#errorsPanel a {
+  color: #2563eb !important;
+}
+
+.details-drawer pre,
+.details-drawer code,
+.drawer pre,
+.drawer code,
+.side-drawer pre,
+.side-drawer code,
+#drawer pre,
+#drawer code,
+#errorsPanel pre,
+#errorsPanel code {
+  background: rgba(15, 23, 42, 0.06) !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+}
