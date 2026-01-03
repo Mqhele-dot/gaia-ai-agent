@@ -1475,7 +1475,9 @@ async function triggerSimulation(capsule) {
 async function triggerLearning() {
   try {
     const { data: learning, requestId } = await api.runLearning({
-      metrics: { capsules: appState.capsules.length },
+      engagement: Math.min(1, 0.7 + appState.capsules.length * 0.02),
+      success_rate: Math.min(1, 0.8 + appState.simulations.length * 0.02),
+      feedback_score: Math.min(1, 0.75 + appState.researchQueue.length * 0.01),
     });
     toast('Learning step recorded', { runId: learning.version || requestId });
     await refreshLearning();

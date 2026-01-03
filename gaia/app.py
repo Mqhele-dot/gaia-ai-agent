@@ -686,10 +686,17 @@ def learning_step_route() -> Response:
         metrics = payload["metrics"]
     else:
         metrics = payload
+
+    def pick_metric(key: str, *aliases: str) -> float:
+        for name in (key, *aliases):
+            if name in metrics:
+                return float(metrics.get(name, 0.0))
+        return 0.0
+
     metrics_payload = {
-        "engagement": float(metrics.get("engagement", 0.0)),
-        "success_rate": float(metrics.get("success_rate", 0.0)),
-        "feedback_score": float(metrics.get("feedback_score", 0.0)),
+        "engagement": pick_metric("engagement", "engagement_score"),
+        "success_rate": pick_metric("success_rate", "success"),
+        "feedback_score": pick_metric("feedback_score", "feedback"),
     }
     snapshot = learning_step(metrics_payload)
     log_payload = {

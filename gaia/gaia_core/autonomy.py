@@ -125,7 +125,7 @@ class AutonomyManager:
                 self._run_insights()
             if self._cycle_count % 5 == 0:
                 self._log_event(
-                    "autonomy_heartbeat",
+                    "autonomy_tick",
                     start=time.perf_counter(),
                     data={"cycle": self._cycle_count},
                     summary="Autonomy heartbeat",
