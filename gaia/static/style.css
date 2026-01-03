@@ -999,7 +999,7 @@ canvas {
 
 .activity-body {
   font-size: 0.9rem;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .log-line pre {
@@ -1219,7 +1219,7 @@ canvas {
 #errorsPanel h1,
 #errorsPanel h2,
 #errorsPanel h3 {
-  color: #0b1220 !important;
+  color: var(--text) !important;
 }
 
 .details-drawer .muted,
@@ -1229,7 +1229,7 @@ canvas {
 .side-drawer .muted,
 #drawer .muted,
 #errorsPanel .muted {
-  color: #334155 !important;
+  color: var(--text-muted) !important;
 }
 
 .details-drawer a,
@@ -1237,7 +1237,7 @@ canvas {
 .side-drawer a,
 #drawer a,
 #errorsPanel a {
-  color: #2563eb !important;
+  color: var(--accent) !important;
 }
 
 .details-drawer pre,
@@ -1250,7 +1250,7 @@ canvas {
 #drawer code,
 #errorsPanel pre,
 #errorsPanel code {
-  background: rgba(15, 23, 42, 0.06) !important;
-  color: #0f172a !important;
-  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+  background: var(--bg-elevated) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
 }

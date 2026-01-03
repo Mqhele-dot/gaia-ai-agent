@@ -244,6 +244,20 @@ def test_activity_recent(client):
     assert len(payload["events"]) >= 1
 
 
+def test_learning_step_accepts_metrics_payload(client):
+    payload = {
+        "metrics": {
+            "engagement": 0.7,
+            "success_rate": 0.8,
+            "feedback_score": 0.9,
+        }
+    }
+    resp = client.post("/learning/step", json=payload)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "version" in data
+
+
 def test_autonomy_status_and_run_once(client):
     status_resp = client.get("/autonomy/status")
     assert status_resp.status_code == 200

@@ -123,6 +123,13 @@ class AutonomyManager:
                 self._run_learning()
             if toggles.get("insights", True):
                 self._run_insights()
+            if self._cycle_count % 5 == 0:
+                self._log_event(
+                    "autonomy_heartbeat",
+                    start=time.perf_counter(),
+                    data={"cycle": self._cycle_count},
+                    summary="Autonomy heartbeat",
+                )
 
     # ------------------------------------------------------------------
     # Individual autonomous behaviours

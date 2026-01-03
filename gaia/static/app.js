@@ -511,6 +511,7 @@ const ui = {
     next: $('#capsule-next'),
     bulk: $('#capsule-bulk-actions'),
     bulkCount: $('#capsule-selected-count'),
+    bulkExport: $('#bulk-export'),
     bulkDelete: $('#bulk-delete'),
     drawer: $('#capsule-drawer'),
     drawerClose: $('#capsule-drawer-close'),
@@ -588,6 +589,62 @@ function toast(message, options = {}) {
   });
   ui.toastRoot.appendChild(fragment);
   setTimeout(() => toastEl.remove(), options.duration || 6000);
+}
+
+function downloadBlob(blob, filename) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function toCsv(rows) {
+  if (!rows.length) return '';
+  const headers = Object.keys(rows[0]);
+  const escapeValue = (value) => {
+    if (value === null || value === undefined) return '';
+    const str = typeof value === 'string' ? value : JSON.stringify(value);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+  const lines = [headers.join(',')];
+  rows.forEach((row) => {
+    lines.push(headers.map((key) => escapeValue(row[key])).join(','));
+  });
+  return lines.join('\n');
+}
+
+function parseCsv(text) {
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return [];
+  const headers = lines[0].split(',').map((header) => header.trim());
+  return lines.slice(1).map((line) => {
+    const values = line.split(',').map((value) => value.trim());
+    return headers.reduce((acc, key, index) => {
+      acc[key] = values[index];
+      return acc;
+    }, {});
+  });
+}
+
+function normalizeImportItems(items) {
+  return items
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { text: item, tag: 'import' };
+      }
+      if (item && typeof item === 'object') {
+        return {
+          text: String(item.text || item.content || item.instruction || '').trim(),
+          tag: String(item.tag || 'import').trim(),
+        };
+      }
+      return null;
+    })
+    .filter((item) => item && item.text);
 }
 
 settingsStore.subscribe((state) => {
@@ -1666,6 +1723,37 @@ function initEvents() {
     }
     renderCapsuleTable();
   });
+  ui.capsuleTable.bulkExport.addEventListener('click', () => {
+    const ids = Array.from(appState.capsuleSelection);
+    if (!ids.length) {
+      toast('Select at least one capsule to export.');
+      return;
+    }
+    const format = (prompt('Export format (json/csv/txt)', 'json') || 'json').toLowerCase();
+    if (!['json', 'csv', 'txt'].includes(format)) {
+      toast('Unsupported export format.');
+      return;
+    }
+    const selected = appState.capsules.filter((capsule) => ids.includes(capsule.id));
+    let blob;
+    if (format === 'csv') {
+      const rows = selected.map((capsule) => ({
+        id: capsule.id,
+        tag: capsule.tag || '',
+        text: capsule.text || '',
+        created_at: capsule.created_at || '',
+      }));
+      blob = new Blob([toCsv(rows)], { type: 'text/csv' });
+    } else if (format === 'txt') {
+      const text = selected.map((capsule) => capsule.text || '').join('\n\n');
+      blob = new Blob([text], { type: 'text/plain' });
+    } else {
+      blob = new Blob([JSON.stringify(selected, null, 2)], { type: 'application/json' });
+    }
+    downloadBlob(blob, `capsules-selected.${format}`);
+    recordExport(format, `${(blob.size / 1024).toFixed(1)} KB`);
+    toast(`Exported ${selected.length} capsule(s).`);
+  });
   ui.capsuleTable.bulkDelete.addEventListener('click', async () => {
     const ids = Array.from(appState.capsuleSelection);
     if (!ids.length) return;
@@ -1782,10 +1870,7 @@ function initEvents() {
       try {
         const blob = await api.exportCapsules(format);
         recordExport(format, `${(blob.size / 1024).toFixed(1)} KB`);
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `capsules.${format}`;
-        link.click();
+        downloadBlob(blob, `capsules.${format}`);
         toast(`Exported ${format.toUpperCase()} capsules`);
       } catch (error) {
         toast(`Export failed: ${error.error || error.message || error}`);
@@ -1794,7 +1879,48 @@ function initEvents() {
   });
   const importBtn = $('#capsule-import');
   if (importBtn) {
-    importBtn.addEventListener('click', () => toast('Import coming soon'));
+    importBtn.addEventListener('click', () => {
+      const picker = document.createElement('input');
+      picker.type = 'file';
+      picker.accept = '.json,.csv,.txt,application/json,text/csv,text/plain';
+      picker.addEventListener('change', async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          let items = [];
+          if (file.name.endsWith('.json')) {
+            const parsed = JSON.parse(text);
+            items = normalizeImportItems(Array.isArray(parsed) ? parsed : [parsed]);
+          } else if (file.name.endsWith('.csv')) {
+            items = normalizeImportItems(parseCsv(text));
+          } else if (file.name.endsWith('.txt')) {
+            items = normalizeImportItems(text.split(/\r?\n/).filter(Boolean));
+          } else {
+            toast('Unsupported file type.');
+            return;
+          }
+          if (!items.length) {
+            toast('No valid capsule entries found.');
+            return;
+          }
+          let created = 0;
+          for (const item of items) {
+            try {
+              await api.saveCapsule({ text: item.text, tag: item.tag });
+              created += 1;
+            } catch (error) {
+              toast(`Import error: ${error.error || error.message || error}`);
+            }
+          }
+          toast(`Imported ${created} capsule(s).`);
+          await refreshCapsules();
+        } catch (error) {
+          toast(`Import failed: ${error.message || error}`);
+        }
+      });
+      picker.click();
+    });
   }
   ui.learning.ranges.forEach((button) => {
     button.addEventListener('click', () => {

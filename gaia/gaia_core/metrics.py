@@ -47,6 +47,7 @@ ACTION_LABELS = {
     "autonomy_learning": "Autonomy learning",
     "autonomy_insight": "Autonomy insight",
     "autonomy_idle": "Autonomy idle",
+    "autonomy_heartbeat": "Autonomy heartbeat",
 }
 
 

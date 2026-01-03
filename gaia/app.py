@@ -682,10 +682,14 @@ def simulate_run() -> Response:
 def learning_step_route() -> Response:
     start = time.time()
     payload = request.get_json(force=True) or {}
+    if isinstance(payload.get("metrics"), dict):
+        metrics = payload["metrics"]
+    else:
+        metrics = payload
     metrics_payload = {
-        "engagement": float(payload.get("engagement", 0.0)),
-        "success_rate": float(payload.get("success_rate", 0.0)),
-        "feedback_score": float(payload.get("feedback_score", 0.0)),
+        "engagement": float(metrics.get("engagement", 0.0)),
+        "success_rate": float(metrics.get("success_rate", 0.0)),
+        "feedback_score": float(metrics.get("feedback_score", 0.0)),
     }
     snapshot = learning_step(metrics_payload)
     log_payload = {
