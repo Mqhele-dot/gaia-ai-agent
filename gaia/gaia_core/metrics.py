@@ -13,6 +13,8 @@ ACTION_LABELS = {
     "capsules_list": "Capsules listed",
     "capsule_analyze": "Capsule analyzed",
     "capsule_analysis_blocked": "Capsule analysis blocked",
+    "capsules_deleted": "Capsules deleted",
+    "capsules_delete_denied": "Capsule delete denied",
     "simulate": "Simulation completed",
     "simulate_blocked": "Simulation blocked",
     "learning_step": "Learning step recorded",

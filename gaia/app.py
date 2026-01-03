@@ -34,6 +34,7 @@ from gaia.gaia_core.simulate import simulate
 from gaia.gaia_core.storage import (
     ACTIVITY_LOG,
     append_log,
+    delete_capsules,
     list_capsules,
     load_settings,
     load_state,
@@ -585,6 +586,42 @@ def capsules_analyze() -> Response:
         summary="Capsule analyzed",
     )
     return jsonify(result)
+
+
+@app.route("/capsules/delete", methods=["POST"])
+def capsules_delete() -> Response:
+    start = time.time()
+    token = request.headers.get("X-ADMIN-TOKEN")
+    if token != ADMIN_TOKEN:
+        _record_event(
+            "capsules_delete_denied",
+            start,
+            log_payload={"event": "capsules_delete_denied"},
+            summary="Capsule delete denied",
+        )
+        return jsonify({"error": "Invalid admin token."}), 403
+
+    payload = request.get_json(force=True) or {}
+    ids = payload.get("ids", [])
+    if not isinstance(ids, list):
+        return jsonify({"error": "Expected ids to be a list."}), 400
+    cleaned_ids = [str(item).strip() for item in ids if str(item).strip()]
+    result = delete_capsules(cleaned_ids)
+    deleted = result["deleted"]
+    missing = result["missing"]
+    _record_event(
+        "capsules_deleted",
+        start,
+        capsules_delta=-len(deleted),
+        log_payload={
+            "event": "capsules_deleted",
+            "count": len(deleted),
+            "deleted": deleted,
+            "missing": missing,
+        },
+        summary=f"Capsules deleted ({len(deleted)})",
+    )
+    return jsonify({"deleted": deleted, "missing": missing, "count": len(deleted)})
 
 
 @app.route("/simulate/run", methods=["POST"])

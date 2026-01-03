@@ -16,6 +16,10 @@ def test_save_and_list_capsules(tmp_path, monkeypatch):
     listed = storage.list_capsules(tag="wind")
     assert listed and listed[0]["id"] == capsule["id"]
 
+    deleted = storage.delete_capsules([capsule["id"]])
+    assert deleted["deleted"] == [capsule["id"]]
+    assert not (storage.CAPSULE_DIR / f"{capsule['id']}.json").exists()
+
     storage.append_log({"event": "test_event", "detail": "ok"})
     logs = list(storage.iter_logs())
     assert logs and any("test_event" in line for line in logs)

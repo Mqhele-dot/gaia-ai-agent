@@ -105,6 +105,28 @@ def list_capsules(tag: str | None = None, query: str | None = None) -> List[Dict
     return results
 
 
+def delete_capsules(ids: Iterable[str]) -> Dict[str, List[str]]:
+    deleted: List[str] = []
+    missing: List[str] = []
+    base_dir = CAPSULE_DIR.resolve()
+    for capsule_id in ids:
+        capsule_id = str(capsule_id).strip()
+        if not capsule_id:
+            continue
+        target = CAPSULE_DIR / f"{capsule_id}.json"
+        try:
+            target.resolve().relative_to(base_dir)
+        except ValueError:
+            missing.append(capsule_id)
+            continue
+        if target.exists():
+            target.unlink()
+            deleted.append(capsule_id)
+        else:
+            missing.append(capsule_id)
+    return {"deleted": deleted, "missing": missing}
+
+
 def append_log(event: Dict[str, object]) -> None:
     entry = dict(event)
     entry.setdefault("ts", _timestamp())
@@ -245,6 +267,7 @@ def save_settings(settings: Dict[str, object]) -> Dict[str, object]:
 __all__ = [
     "save_capsule",
     "list_capsules",
+    "delete_capsules",
     "append_log",
     "iter_logs",
     "CAPSULE_DIR",

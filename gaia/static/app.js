@@ -348,6 +348,15 @@ const api = {
     const result = await getApiClient().get(url.toString(), { retries: 1, retryDelay: 300 });
     return ensureSuccess(result).data;
   },
+  async deleteCapsules(ids, token) {
+    const result = await getApiClient().post(
+      '/capsules/delete',
+      { ids },
+      { headers: { 'X-ADMIN-TOKEN': token }, retries: 1, retryDelay: 300 },
+    );
+    const success = ensureSuccess(result);
+    return { data: success.data, requestId: success.requestId };
+  },
   async saveCapsule(payload) {
     const result = await getApiClient().post('/capsules/save', payload, { retries: 2, retryDelay: 400 });
     const success = ensureSuccess(result);
@@ -502,6 +511,7 @@ const ui = {
     next: $('#capsule-next'),
     bulk: $('#capsule-bulk-actions'),
     bulkCount: $('#capsule-selected-count'),
+    bulkDelete: $('#bulk-delete'),
     drawer: $('#capsule-drawer'),
     drawerClose: $('#capsule-drawer-close'),
     drawerContent: $('#capsule-drawer-content'),
@@ -1655,6 +1665,26 @@ function initEvents() {
       appState.capsuleSelection.clear();
     }
     renderCapsuleTable();
+  });
+  ui.capsuleTable.bulkDelete.addEventListener('click', async () => {
+    const ids = Array.from(appState.capsuleSelection);
+    if (!ids.length) return;
+    const token = prompt(`Enter admin token to delete ${ids.length} capsule(s)`);
+    if (!token) {
+      toast('Deletion canceled.');
+      return;
+    }
+    try {
+      const { data, requestId } = await api.deleteCapsules(ids, token);
+      const count = data.count || data.deleted?.length || 0;
+      toast(`Deleted ${count} capsule(s).`, { runId: requestId || `delete-${Date.now()}` });
+      appState.capsuleSelection.clear();
+      await refreshCapsules();
+    } catch (error) {
+      toast(`Delete failed: ${error.error || error.message || error}`, {
+        runId: error.requestId || `delete-error-${Date.now()}`,
+      });
+    }
   });
   ui.capsuleTable.drawerClose.addEventListener('click', closeCapsuleDrawer);
   ui.research.form.addEventListener('submit', (event) => {

@@ -117,6 +117,31 @@ def test_upgrade_ledger_records(client):
     assert all("ethics_score" in entry for entry in lines)
 
 
+def test_capsule_delete_endpoint(client):
+    payload = {"text": "Test delete", "tag": "cleanup"}
+    save_resp = client.post("/capsules/save", json=payload)
+    capsule_id = save_resp.get_json()["id"]
+
+    delete_resp = client.post(
+        "/capsules/delete",
+        json={"ids": [capsule_id]},
+        headers={"X-ADMIN-TOKEN": "test-token"},
+    )
+    assert delete_resp.status_code == 200
+    delete_data = delete_resp.get_json()
+    assert delete_data["count"] == 1
+    assert capsule_id in delete_data["deleted"]
+
+    list_resp = client.get("/capsules/list")
+    capsules = list_resp.get_json()["capsules"]
+    assert capsule_id not in [cap["id"] for cap in capsules]
+
+    data_root: Path = client.data_root
+    activity = data_root / "logs" / "activity.jsonl"
+    events = [json.loads(line)["event"] for line in activity.read_text().splitlines() if line.strip()]
+    assert "capsules_deleted" in events
+
+
 def test_research_explore_route(client, monkeypatch):
     calls = {"count": 0}
 
