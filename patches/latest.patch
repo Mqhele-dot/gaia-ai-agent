@@ -1,0 +1,105 @@
+diff --git a/.env.example b/.env.example
+index 9d45349..bf82164 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,3 +1,3 @@
+-ADMIN_TOKEN=changeme
++ADMIN_TOKEN=please-change-me-strong-token
+ GAIA_VERSION=gaia-v1.0
+ GAIA_DATA_DIR=gaia/data
+diff --git a/README.md b/README.md
+index de66b62..ce6d7e3 100644
+--- a/README.md
++++ b/README.md
+@@ -156,6 +156,9 @@ can execute directly.
+ 3. Set the desired `ADMIN_TOKEN`, `GAIA_VERSION`, and `GAIA_DATA_DIR` secrets in
+    the Space settings (the defaults from `.env.example` also work).
+ 
++   *When a Space provides persistent storage via `HF_PERSISTENT_DIR` or `HF_HOME`,
++   Gaia automatically writes to `<persistent>/gaia` so activity survives restarts.*
++
+ The Docker build installs dependencies and starts Gunicorn via the command
+ 
+ ```
+@@ -166,6 +169,20 @@ The provided root-level [`app.py`](app.py) mirrors this behaviour for local
+ testing or for Spaces configured with the "Python" runtime that expects an
+ `app` object in the module namespace.
+ 
++### Patch-based upgrades
++
++If you already host an earlier Gaia build, you can apply just the latest
++dashboard upgrades as a patch rather than re-uploading the full project:
++
++```bash
++curl -sSL https://raw.githubusercontent.com/<your-org>/gaia-ai-agent/main/patches/latest.patch | git apply
++```
++
++The patch contains changes to `/settings`, the control-surface UI, and the
++Hugging Face–friendly storage defaults so Spaces deployments stay in sync. View
++the patch contents under [`patches/`](patches/) if you need to audit before
++applying.
++
+ ## API Reference
+ 
+ | Method | Route               | Description                                      |
+diff --git a/gaia/gaia_core/storage.py b/gaia/gaia_core/storage.py
+index 46f31e8..b123a30 100644
+--- a/gaia/gaia_core/storage.py
++++ b/gaia/gaia_core/storage.py
+@@ -9,7 +9,28 @@ from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Dict, Iterable, List
+ 
+-DATA_DIR = Path(os.getenv("GAIA_DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
++
++def _resolve_data_dir() -> Path:
++    """Determine the best storage directory for the current environment."""
++
++    explicit = os.getenv("GAIA_DATA_DIR")
++    if explicit:
++        return Path(explicit)
++
++    if os.getenv("SPACE_ID"):
++        for env_key in ("HF_PERSISTENT_DIR", "HF_HOME"):
++            candidate_root = os.getenv(env_key)
++            if candidate_root:
++                return Path(candidate_root) / "gaia"
++
++        default_root = Path("/data")
++        if default_root.exists():
++            return default_root / "gaia"
++
++    return Path(__file__).resolve().parents[1] / "data"
++
++
++DATA_DIR = _resolve_data_dir()
+ CAPSULE_DIR = DATA_DIR / "capsules"
+ LOG_DIR = DATA_DIR / "logs"
+ MODELS_DIR = DATA_DIR / "models"
+diff --git a/tests/test_storage.py b/tests/test_storage.py
+index 82a1025..6fe52e5 100644
+--- a/tests/test_storage.py
++++ b/tests/test_storage.py
+@@ -1,4 +1,5 @@
+ import importlib
++from pathlib import Path
+ 
+ 
+ def test_save_and_list_capsules(tmp_path, monkeypatch):
+@@ -48,3 +49,16 @@ def test_state_round_trip(tmp_path, monkeypatch):
+     storage.save_state({"halted": True})
+     persisted = storage.load_state()
+     assert persisted["halted"] is True
++
++
++def test_hf_persistent_storage_fallback(tmp_path, monkeypatch):
++    monkeypatch.delenv("GAIA_DATA_DIR", raising=False)
++    monkeypatch.setenv("SPACE_ID", "user/space")
++    monkeypatch.setenv("HF_PERSISTENT_DIR", str(tmp_path))
++
++    from gaia.gaia_core import storage
++
++    importlib.reload(storage)
++
++    assert storage.DATA_DIR == Path(tmp_path) / "gaia"
++    assert storage.CAPSULE_DIR.parent == storage.DATA_DIR

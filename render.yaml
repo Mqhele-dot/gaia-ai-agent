@@ -3,4 +3,4 @@ services:
     name: gaia-dashboard
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: gunicorn gaia.app:app --bind 0.0.0.0:$PORT --workers 1

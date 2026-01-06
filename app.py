@@ -1,7 +1,13 @@
-from flask import Flask, render_template
+"""HF Spaces entrypoint for the Gaia dashboard."""
+from __future__ import annotations
 
-app = Flask(__name__)
+import os
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+from gaia.app import app as flask_app
+
+app = flask_app
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "7860"))
+    app.run(host="0.0.0.0", port=port)
