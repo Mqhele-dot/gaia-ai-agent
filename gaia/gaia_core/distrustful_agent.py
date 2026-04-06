@@ -214,6 +214,7 @@ class DeterministicDiffEmitter:
 
 WITNESS_SQL_SCHEMA = """
 PRAGMA journal_mode=WAL;
+PRAGMA journal_size_limit=268435456;
 CREATE TABLE IF NOT EXISTS witness_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id TEXT UNIQUE NOT NULL,
@@ -572,7 +573,8 @@ class VerificationRunner:
         self.retry_manager = retry_manager
 
     def run(self, repo_root: Path, patch_text: str, strict: bool = False) -> List[VerificationResult]:
-        patch_digest = sha256_bytes(patch_text.encode("utf-8"))
+        patch_bytes = patch_text.encode("utf-8")
+        patch_digest = self.tool_runner.ledger.store_artifact(patch_bytes, suffix=".patch")
         self.tool_runner.ledger.append({"phase": "proposal", "rationale_hash": patch_digest})
 
         steps: List[VerificationStep] = [
@@ -588,10 +590,10 @@ class VerificationRunner:
 
         results: List[VerificationResult] = []
         for step in steps:
-            run = self.tool_runner.run(
-                step.command,
-                cwd=repo_root,
-                input_data=patch_text.encode("utf-8") if step.name in {"patch_check", "apply_patch"} else None,
+            run = self._execute_step_with_retries(
+                step=step,
+                repo_root=repo_root,
+                patch_bytes=patch_bytes,
             )
             exit_code = run.exit_code
             stdout = run.stdout.decode("utf-8", errors="replace")
@@ -604,11 +606,6 @@ class VerificationRunner:
                 continue
 
             failure_class = self._classify_failure(step.name, exit_code)
-            if self.retry_manager.is_retryable(failure_class):
-                self.retry_manager.register_failure(
-                    failure_class,
-                    RetryPolicy(max_attempts=2),
-                )
             results.append(
                 VerificationResult(
                     step=step.name,
@@ -629,6 +626,33 @@ class VerificationRunner:
                 break
 
         return results
+
+    def _execute_step_with_retries(self, step: VerificationStep, repo_root: Path, patch_bytes: bytes) -> ToolResult:
+        retry_policy = RetryPolicy(max_attempts=2)
+        while True:
+            run = self.tool_runner.run(
+                step.command,
+                cwd=repo_root,
+                input_data=patch_bytes if step.name in {"patch_check", "apply_patch"} else None,
+            )
+            failure_class = self._classify_failure(step.name, run.exit_code)
+            if run.exit_code == 0:
+                return run
+            if not self.retry_manager.is_retryable(failure_class):
+                return run
+            try:
+                self.retry_manager.register_failure(failure_class, retry_policy)
+            except RetryBudgetExceeded:
+                self.tool_runner.ledger.append(
+                    {
+                        "phase": "verification",
+                        "verification_status": "failed",
+                        "controller_decision": "halt",
+                        "failure_class": "infra_tool_failure_budget_exhausted",
+                    }
+                )
+                return run
+            time.sleep(self.retry_manager.compute_sleep_s(failure_class, retry_policy))
 
     @staticmethod
     def _classify_failure(step: str, exit_code: int) -> str:
