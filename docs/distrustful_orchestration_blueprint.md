@@ -10,6 +10,7 @@
   - `InjectionSanitizer`: indirect prompt-injection defenses.
   - `RetryManager`: bounded retries + entropy cap.
   - `ApprovalTokenManager`: scoped approval tokens (HMAC).
+  - `TaskExecutionEngine` + `BoundedPlanner`: bounded multi-step task orchestration over distrustful primitives.
 
 ## SQLite schema (WAL)
 See `WITNESS_SQL_SCHEMA` constant. It creates `witness_records` with:
@@ -139,3 +140,59 @@ Use `memory_profile_notes()` for built-in operator defaults:
   - note exists
   - note `witness_tip_hash` matches expected finalization tip
 - Commit success + note failure is classified as `partial_finalization_failure`.
+
+## Task-level architecture
+- Task objects:
+  - `TaskRequest`
+  - `TaskPlan`
+  - `TaskStep`
+  - `TaskExecutionResult`
+  - `TaskStatus`
+  - `TaskArtifactSummary`
+- High-level execution is handled by `TaskExecutionEngine` and validated by `BoundedPlanner`.
+- The task engine never bypasses lower-level distrustful primitives:
+  - edit intent validation
+  - deterministic diff emission
+  - verification runner
+  - rollback path
+  - finalization + git notes verification
+
+## Task status machine
+- Nominal: `PENDING -> PLANNED -> RUNNING -> AWAITING_APPROVAL -> COMPLETED`
+- Failure/partial branches: `HALTED`, `FAILED`, `PARTIAL`
+- Transitions are code-driven and bounded by policy limits.
+
+## Step types and bounded planning rules
+- Supported step types:
+  - `inspect_repo`
+  - `read_file`
+  - `plan_edit`
+  - `apply_edit`
+  - `run_verification`
+  - `finalize_change`
+  - `summarize_result`
+- Validation rejects:
+  - unsupported step types
+  - unbounded loop language in steps
+  - missing success criteria
+  - plans over max step limits
+  - multi-risk action bundles in one risky step
+
+## Refinement and ambiguity policy
+- On selector ambiguity, refinement is permitted only for locator narrowing.
+- Refinement attempts are bounded (`max_refinement_attempts`).
+- If ambiguity remains after budget, task halts safely.
+
+## Approval integration at task level
+- `finalize_change` requires `ApprovalTokenManager` when approval is configured.
+- Task pauses with `AWAITING_APPROVAL` if token is absent.
+- Invalid/denied approval halts the task.
+- Approval reference can be embedded into provenance note payload.
+
+## Relationship to lower-level distrustful core
+- Task engine is orchestration-only; it delegates mutation and proof to:
+  - `DeterministicDiffEmitter`
+  - `VerificationRunner`
+  - rollback helpers
+  - `finalize_commit` / `attach_git_note` / `verify_finalization`
+- This keeps one-task, one-edit, one-commit reliability as primary objective.

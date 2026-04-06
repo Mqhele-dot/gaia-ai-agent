@@ -986,3 +986,366 @@ def memory_profile_notes() -> Dict[str, Any]:
         "retrieval_policy": "top-k bounded to <=8 chunks, <=32KB per chunk",
         "kv_cache_hint": "keep_alive only during active reasoning window",
     }
+
+
+class TaskStatus:
+    PENDING = "PENDING"
+    PLANNED = "PLANNED"
+    RUNNING = "RUNNING"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    COMPLETED = "COMPLETED"
+    HALTED = "HALTED"
+    FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
+
+
+@dataclass(frozen=True)
+class TaskArtifactSummary:
+    artifact_hash: str
+    kind: str
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class TaskRequest:
+    task_id: str
+    user_objective: str
+    repo_root: str
+    strict_mode: bool
+    approval_required: bool
+    created_at: str
+
+
+@dataclass
+class TaskStep:
+    step_id: str
+    step_type: str
+    description: str
+    expected_output: str
+    dependencies: List[str]
+    risk_level: str
+    requires_approval: bool
+    status: str = "PENDING"
+    inputs: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TaskPlan:
+    task_id: str
+    objective_summary: str
+    assumptions: List[str]
+    bounded_steps: List[TaskStep]
+    success_criteria: List[str]
+    stop_conditions: List[str]
+
+
+@dataclass
+class TaskExecutionResult:
+    task_id: str
+    final_status: str
+    completed_steps: List[str]
+    failed_step: Optional[str]
+    commit_hash: Optional[str]
+    witness_tip_hash: str
+    summary: str
+    artifacts: List[TaskArtifactSummary]
+
+
+@dataclass(frozen=True)
+class TaskPolicyLimits:
+    max_task_steps: int = 7
+    max_refinement_attempts: int = 2
+    max_files_read_per_step: int = 3
+    max_context_bytes: int = 32_000
+    max_task_runtime_s: int = 120
+    max_approvals_per_task: int = 1
+
+
+class BoundedPlanner:
+    SUPPORTED_STEP_TYPES = {
+        "inspect_repo",
+        "read_file",
+        "plan_edit",
+        "apply_edit",
+        "run_verification",
+        "finalize_change",
+        "summarize_result",
+    }
+
+    def __init__(self, max_steps: int = 7) -> None:
+        self.max_steps = max_steps
+
+    def build_plan(self, request: TaskRequest, proposed_plan: Optional[TaskPlan] = None) -> TaskPlan:
+        plan = proposed_plan or self._default_plan(request)
+        self.validate_plan(plan)
+        return plan
+
+    def validate_plan(self, plan: TaskPlan) -> None:
+        if not plan.success_criteria:
+            raise ValueError("TaskPlan requires success_criteria")
+        if len(plan.bounded_steps) == 0 or len(plan.bounded_steps) > self.max_steps:
+            raise ValueError("TaskPlan step count exceeds bounded limit")
+        for step in plan.bounded_steps:
+            if step.step_type not in self.SUPPORTED_STEP_TYPES:
+                raise ValueError(f"Unsupported step type: {step.step_type}")
+            if any(token in step.description.lower() for token in ("loop until", "while true", "repeat forever")):
+                raise ValueError("Unbounded loop language is not allowed in step descriptions")
+            if step.step_type == "apply_edit" and " and " in step.description.lower():
+                raise ValueError("Risky multi-action step must be split")
+
+    @staticmethod
+    def _default_plan(request: TaskRequest) -> TaskPlan:
+        return TaskPlan(
+            task_id=request.task_id,
+            objective_summary=request.user_objective,
+            assumptions=["single-edit reliability-first workflow"],
+            bounded_steps=[
+                TaskStep("s1", "inspect_repo", "Inspect repository state", "Repo metadata", [], "low", False),
+                TaskStep("s2", "plan_edit", "Produce one structured edit intent", "Valid EditIntent", ["s1"], "medium", False),
+                TaskStep("s3", "apply_edit", "Apply one deterministic edit", "Verified patch", ["s2"], "high", False),
+                TaskStep("s4", "finalize_change", "Finalize commit and provenance", "Commit + note", ["s3"], "high", True),
+                TaskStep("s5", "summarize_result", "Summarize witnessed outcomes", "Deterministic summary", ["s4"], "low", False),
+            ],
+            success_criteria=["verification passed", "commit and note verified"],
+            stop_conditions=["selector ambiguity", "verification failure", "approval denied"],
+        )
+
+
+class TaskExecutionEngine:
+    """Bounded task loop that routes all risky operations through distrustful primitives."""
+
+    def __init__(
+        self,
+        *,
+        planner: BoundedPlanner,
+        diff_emitter: DeterministicDiffEmitter,
+        verification_runner: VerificationRunner,
+        tool_runner: ToolWitnessRunner,
+        approval_tokens: ApprovalTokenManager,
+        sanitizer: InjectionSanitizer,
+        policy: TaskPolicyLimits = TaskPolicyLimits(),
+        intent_provider: Optional[Any] = None,
+        refinement_provider: Optional[Any] = None,
+    ) -> None:
+        self.planner = planner
+        self.diff_emitter = diff_emitter
+        self.verification_runner = verification_runner
+        self.tool_runner = tool_runner
+        self.approval_tokens = approval_tokens
+        self.sanitizer = sanitizer
+        self.policy = policy
+        self.intent_provider = intent_provider
+        self.refinement_provider = refinement_provider
+
+    def execute(
+        self,
+        request: TaskRequest,
+        *,
+        proposed_plan: Optional[TaskPlan] = None,
+        approval_token: Optional[str] = None,
+    ) -> TaskExecutionResult:
+        started = time.time()
+        completed_steps: List[str] = []
+        artifacts: List[TaskArtifactSummary] = []
+        commit_hash: Optional[str] = None
+        current_patch = ""
+        intent: Optional[EditIntent] = None
+        status = TaskStatus.PENDING
+        failed_step: Optional[str] = None
+
+        plan = self.planner.build_plan(request, proposed_plan=proposed_plan)
+        self._task_event("task_plan_created", request.task_id, None, "plan_ready")
+        status = TaskStatus.PLANNED
+
+        for step in plan.bounded_steps[: self.policy.max_task_steps]:
+            if time.time() - started > self.policy.max_task_runtime_s:
+                failed_step = step.step_id
+                status = TaskStatus.HALTED
+                self._task_event("task_halted", request.task_id, step.step_id, "runtime_limit")
+                break
+
+            status = TaskStatus.RUNNING
+            self._task_event("task_step_started", request.task_id, step.step_id, "start")
+            try:
+                if step.step_type == "inspect_repo":
+                    dirty = detect_dirty_state(self.tool_runner, Path(request.repo_root))
+                    payload = json.dumps(dirty, sort_keys=True).encode("utf-8")
+                    digest = self.tool_runner.ledger.store_artifact(payload, suffix=".inspect.json")
+                    artifacts.append(TaskArtifactSummary(digest, "inspect_repo", "dirty-state snapshot"))
+                elif step.step_type == "read_file":
+                    step_artifacts = self._execute_read_file_step(request, step)
+                    artifacts.extend(step_artifacts)
+                elif step.step_type == "plan_edit":
+                    intent = self._get_edit_intent(request, step)
+                elif step.step_type == "apply_edit":
+                    if intent is None:
+                        raise RuntimeError("apply_edit requires prior plan_edit intent")
+                    current_patch = self._execute_apply_edit(request, step, intent)
+                elif step.step_type == "run_verification":
+                    verify_results = self.verification_runner.run(Path(request.repo_root), current_patch, strict=request.strict_mode)
+                    if any((not result.passed) and result.step in {"patch_check", "apply_patch", "change_detect", "tests"} for result in verify_results):
+                        raise RuntimeError("verification_failed")
+                elif step.step_type == "finalize_change":
+                    status, commit_hash = self._execute_finalize_step(request, step, current_patch, approval_token)
+                    if status in {TaskStatus.AWAITING_APPROVAL, TaskStatus.HALTED, TaskStatus.PARTIAL, TaskStatus.FAILED}:
+                        failed_step = step.step_id
+                        self._task_event("task_step_failed", request.task_id, step.step_id, status.lower())
+                        break
+                elif step.step_type == "summarize_result":
+                    pass
+                else:
+                    raise ValueError(f"Unsupported step type: {step.step_type}")
+            except SelectorAmbiguityError:
+                refined_intent = self._attempt_refinement(request, intent)
+                if refined_intent is None:
+                    failed_step = step.step_id
+                    status = TaskStatus.HALTED
+                    self._task_event("task_halted", request.task_id, step.step_id, "selector_ambiguous")
+                    break
+                intent = refined_intent
+                current_patch = self._execute_apply_edit(request, step, intent)
+            except Exception as exc:
+                failed_step = step.step_id
+                status = TaskStatus.FAILED
+                self._task_event("task_step_failed", request.task_id, step.step_id, str(exc), failure_class="task_step_failed")
+                break
+
+            step.status = "COMPLETED"
+            completed_steps.append(step.step_id)
+            self._task_event("task_step_completed", request.task_id, step.step_id, "completed")
+
+        if status == TaskStatus.RUNNING:
+            status = TaskStatus.COMPLETED
+
+        summary = self._build_summary_from_witness(status, completed_steps, failed_step, commit_hash)
+        final_event = "task_completed" if status == TaskStatus.COMPLETED else "task_partial" if status == TaskStatus.PARTIAL else "task_halted"
+        self._task_event(final_event, request.task_id, failed_step, status.lower())
+        return TaskExecutionResult(
+            task_id=request.task_id,
+            final_status=status,
+            completed_steps=completed_steps,
+            failed_step=failed_step,
+            commit_hash=commit_hash,
+            witness_tip_hash=self.tool_runner.ledger.tip_hash,
+            summary=summary,
+            artifacts=artifacts,
+        )
+
+    def _execute_read_file_step(self, request: TaskRequest, step: TaskStep) -> List[TaskArtifactSummary]:
+        targets = list(step.inputs.get("files", []))[: self.policy.max_files_read_per_step]
+        summaries: List[TaskArtifactSummary] = []
+        for rel_path in targets:
+            file_path = (Path(request.repo_root) / rel_path).resolve()
+            text = file_path.read_text(encoding="utf-8")
+            bounded = text[: self.policy.max_context_bytes]
+            sanitized = self.sanitizer.sanitize(bounded, provenance=f"file:{rel_path}")
+            digest = self.tool_runner.ledger.store_artifact(sanitized.sanitized_text.encode("utf-8"), suffix=".sanitized.txt")
+            summaries.append(TaskArtifactSummary(digest, "read_file", rel_path))
+        return summaries
+
+    def _get_edit_intent(self, request: TaskRequest, step: TaskStep) -> EditIntent:
+        if self.intent_provider is None:
+            raise RuntimeError("No intent provider configured")
+        proposed = self.intent_provider(request, step)
+        if isinstance(proposed, EditIntent):
+            intent = proposed
+        else:
+            intent = EditIntent(**proposed)
+        intent.validate()
+        return intent
+
+    def _execute_apply_edit(self, request: TaskRequest, step: TaskStep, intent: EditIntent) -> str:
+        resolved = self.diff_emitter.resolve(Path(request.repo_root), intent)
+        patch = self.diff_emitter.emit_diff(Path(request.repo_root), resolved)
+        verify_results = self.verification_runner.run(Path(request.repo_root), patch, strict=request.strict_mode)
+        if any((not result.passed) and result.step in {"patch_check", "apply_patch", "change_detect", "tests"} for result in verify_results):
+            raise RuntimeError("verification_failed")
+        return patch
+
+    def _attempt_refinement(self, request: TaskRequest, current_intent: Optional[EditIntent]) -> Optional[EditIntent]:
+        if current_intent is None or self.refinement_provider is None:
+            return None
+        for attempt in range(self.policy.max_refinement_attempts):
+            refined = self.refinement_provider(request, current_intent, attempt)
+            if not refined:
+                continue
+            candidate = refined if isinstance(refined, EditIntent) else EditIntent(**refined)
+            candidate.validate()
+            return candidate
+        return None
+
+    def _execute_finalize_step(
+        self,
+        request: TaskRequest,
+        step: TaskStep,
+        patch_text: str,
+        approval_token: Optional[str],
+    ) -> Tuple[str, Optional[str]]:
+        if request.approval_required or step.requires_approval:
+            if not approval_token:
+                return TaskStatus.AWAITING_APPROVAL, None
+            try:
+                approval_payload = self.approval_tokens.verify(approval_token, "git.commit")
+                approval_ref = approval_payload.get("jti", "")
+            except Exception:
+                return TaskStatus.HALTED, None
+        else:
+            approval_ref = ""
+
+        commit = finalize_commit(self.tool_runner, Path(request.repo_root), task_id=request.task_id)
+        if not commit.get("ok"):
+            return TaskStatus.FAILED, None
+        commit_hash = str(commit["commit_hash"])
+        note_payload = build_provenance_note(
+            {
+                "task_id": request.task_id,
+                "timestamp": _utc_now(),
+                "model_fingerprint": self.tool_runner.model_fingerprint,
+                "witness_tip_hash": self.tool_runner.ledger.tip_hash,
+                "patch_artifact_hash": sha256_bytes(patch_text.encode("utf-8")),
+                "approval_ref": approval_ref,
+                "prompt_schema_hash": sha256_bytes(json.dumps(EDIT_INTENT_JSON_SCHEMA, sort_keys=True).encode("utf-8")),
+                "verification_summary_hash": sha256_bytes(f"{request.task_id}|{commit_hash}".encode("utf-8")),
+            }
+        )
+        note = attach_git_note(self.tool_runner, Path(request.repo_root), commit_hash=commit_hash, note_payload=note_payload)
+        if not note.get("ok"):
+            return TaskStatus.PARTIAL, commit_hash
+        verified = verify_finalization(
+            self.tool_runner,
+            Path(request.repo_root),
+            commit_hash=commit_hash,
+            expected_witness_tip_hash=self.tool_runner.ledger.tip_hash,
+        )
+        if not verified.get("ok"):
+            return TaskStatus.PARTIAL, commit_hash
+        return TaskStatus.RUNNING, commit_hash
+
+    def _task_event(
+        self,
+        phase: str,
+        task_id: str,
+        step_id: Optional[str],
+        decision: str,
+        *,
+        failure_class: str = "",
+    ) -> None:
+        self.tool_runner.ledger.append(
+            {
+                "phase": phase,
+                "controller_decision": decision,
+                "failure_class": failure_class,
+                "tool_name": "task_engine",
+                "args_hash": sha256_bytes(f"{task_id}:{step_id or ''}:{decision}".encode("utf-8")),
+                "verification_status": "",
+            }
+        )
+
+    @staticmethod
+    def _build_summary_from_witness(status: str, completed: List[str], failed_step: Optional[str], commit_hash: Optional[str]) -> str:
+        parts = [f"status={status}", f"completed_steps={len(completed)}"]
+        if failed_step:
+            parts.append(f"failed_step={failed_step}")
+        if commit_hash:
+            parts.append(f"commit={commit_hash}")
+        return "; ".join(parts)
