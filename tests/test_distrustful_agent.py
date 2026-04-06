@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 from gaia.gaia_core.distrustful_agent import (
+    EDIT_INTENT_JSON_SCHEMA,
+    WITNESS_SQL_SCHEMA,
     ApprovalTokenManager,
     DeterministicController,
     DeterministicDiffEmitter,
@@ -12,6 +14,9 @@ from gaia.gaia_core.distrustful_agent import (
     RetryBudgetExceeded,
     RetryManager,
     RetryPolicy,
+    ToolResult,
+    VerificationRunner,
+    VerificationStep,
     WitnessLedger,
 )
 
@@ -77,6 +82,53 @@ def test_retryability_is_infra_only() -> None:
     assert retries.is_retryable("infra_tool_failure")
     assert not retries.is_retryable("deterministic_failure")
     assert not retries.is_retryable("flaky_or_environmental")
+
+
+def test_schema_requires_nullable_ast_path() -> None:
+    required = EDIT_INTENT_JSON_SCHEMA["required"]
+    ast_type = EDIT_INTENT_JSON_SCHEMA["properties"]["ast_path"]["type"]
+    assert "ast_path" in required
+    assert ast_type == ["string", "null"]
+
+
+def test_witness_sql_has_wal_and_size_limit() -> None:
+    assert "PRAGMA journal_mode=WAL;" in WITNESS_SQL_SCHEMA
+    assert "PRAGMA journal_size_limit=268435456;" in WITNESS_SQL_SCHEMA
+
+
+def test_verification_retry_budget_exhaustion_logs_halt(tmp_path: Path) -> None:
+    class FakeLedger:
+        def __init__(self) -> None:
+            self.events = []
+
+        def append(self, record):
+            self.events.append(record)
+            return record
+
+        def store_artifact(self, payload: bytes, suffix: str = ".bin") -> str:
+            return "d" * 64
+
+    class FakeToolRunner:
+        def __init__(self) -> None:
+            self.ledger = FakeLedger()
+
+        def run(self, command, cwd, max_capture=200_000, input_data=None):
+            return ToolResult(
+                command=list(command),
+                exit_code=127,
+                stdout=b"",
+                stderr=b"missing tool",
+                wall_ms=1,
+            )
+
+    runner = VerificationRunner(tool_runner=FakeToolRunner(), retry_manager=RetryManager(entropy_cap=1))
+    step = VerificationStep("tests", ["pytest", "-q"], required=True)
+    out = runner._execute_step_with_retries(step=step, repo_root=tmp_path, patch_bytes=b"")
+    assert out.exit_code == 127
+    assert any(
+        event.get("failure_class") == "infra_tool_failure_budget_exhausted"
+        for event in runner.tool_runner.ledger.events
+    )
 
 
 def test_injection_sanitizer_labels_untrusted() -> None:
