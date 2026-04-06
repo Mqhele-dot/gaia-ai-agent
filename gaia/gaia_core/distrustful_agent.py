@@ -20,10 +20,10 @@ import sqlite3
 import subprocess
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 ISO_UTC = "%Y-%m-%dT%H:%M:%S.%fZ"
 
@@ -417,6 +417,12 @@ class RetryManager:
         jitter = random.uniform(0, policy.jitter_s)
         return raw + jitter
 
+    @staticmethod
+    def is_retryable(failure_class: str) -> bool:
+        """Only infra/tool failures get backoff-based retries."""
+
+        return failure_class == "infra_tool_failure"
+
 
 # ---------------------------------------------------------------------------
 # Approval token design (scoped HMAC token)
@@ -482,22 +488,42 @@ class ToolWitnessRunner:
             f"{socket.gethostname()}|{os.uname().sysname}|{os.uname().release}".encode("utf-8")
         )
 
-    def run(self, command: Sequence[str], cwd: Path, max_capture: int = 200_000) -> ToolResult:
+    def run(
+        self,
+        command: Sequence[str],
+        cwd: Path,
+        max_capture: int = 200_000,
+        input_data: Optional[bytes] = None,
+    ) -> ToolResult:
         started = time.perf_counter()
-        proc = subprocess.run(list(command), cwd=str(cwd), capture_output=True, check=False)
+        try:
+            proc = subprocess.run(
+                list(command),
+                cwd=str(cwd),
+                capture_output=True,
+                check=False,
+                input=input_data,
+            )
+            exit_code = proc.returncode
+            full_stdout = proc.stdout
+            full_stderr = proc.stderr
+        except OSError as exc:
+            exit_code = 127
+            full_stdout = b""
+            full_stderr = str(exc).encode("utf-8", errors="replace")
         wall_ms = int((time.perf_counter() - started) * 1000)
-        stdout = proc.stdout[:max_capture]
-        stderr = proc.stderr[:max_capture]
+        stdout = full_stdout[:max_capture]
+        stderr = full_stderr[:max_capture]
         result = ToolResult(
             command=list(command),
-            exit_code=proc.returncode,
+            exit_code=exit_code,
             stdout=stdout,
             stderr=stderr,
             wall_ms=wall_ms,
-            stdout_truncated=len(proc.stdout) > max_capture,
-            stderr_truncated=len(proc.stderr) > max_capture,
+            stdout_truncated=len(full_stdout) > max_capture,
+            stderr_truncated=len(full_stderr) > max_capture,
         )
-        self._record_tool_result(result, full_stdout=proc.stdout, full_stderr=proc.stderr)
+        self._record_tool_result(result, full_stdout=full_stdout, full_stderr=full_stderr)
         return result
 
     def _record_tool_result(self, result: ToolResult, *, full_stdout: bytes, full_stderr: bytes) -> None:
@@ -562,22 +588,13 @@ class VerificationRunner:
 
         results: List[VerificationResult] = []
         for step in steps:
-            if step.name in {"patch_check", "apply_patch"}:
-                out = subprocess.run(step.command, cwd=str(repo_root), input=patch_text.encode("utf-8"), capture_output=True)
-                tool_result = ToolResult(
-                    command=step.command,
-                    exit_code=out.returncode,
-                    stdout=out.stdout,
-                    stderr=out.stderr,
-                    wall_ms=0,
-                )
-                self.tool_runner._record_tool_result(tool_result, full_stdout=out.stdout, full_stderr=out.stderr)
-                exit_code = out.returncode
-                stdout = out.stdout.decode("utf-8", errors="replace")
-            else:
-                run = self.tool_runner.run(step.command, cwd=repo_root)
-                exit_code = run.exit_code
-                stdout = run.stdout.decode("utf-8", errors="replace")
+            run = self.tool_runner.run(
+                step.command,
+                cwd=repo_root,
+                input_data=patch_text.encode("utf-8") if step.name in {"patch_check", "apply_patch"} else None,
+            )
+            exit_code = run.exit_code
+            stdout = run.stdout.decode("utf-8", errors="replace")
 
             if step.name == "change_detect" and not stdout.strip():
                 exit_code = 1
@@ -587,6 +604,11 @@ class VerificationRunner:
                 continue
 
             failure_class = self._classify_failure(step.name, exit_code)
+            if self.retry_manager.is_retryable(failure_class):
+                self.retry_manager.register_failure(
+                    failure_class,
+                    RetryPolicy(max_attempts=2),
+                )
             results.append(
                 VerificationResult(
                     step=step.name,
@@ -670,6 +692,7 @@ EDIT_INTENT_JSON_SCHEMA: Dict[str, Any] = {
         "symbol_name",
         "anchor_text",
         "scope_hint",
+        "ast_path",
         "replacement_snippet",
         "postconditions",
         "rationale_summary",
