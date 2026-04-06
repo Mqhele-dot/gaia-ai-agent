@@ -565,6 +565,169 @@ class VerificationResult:
     failure_class: Optional[str] = None
 
 
+@dataclass
+class DirtyStateTracker:
+    patch_check_passed: bool = False
+    apply_patch_succeeded: bool = False
+    working_tree_changed: bool = False
+    rollback_snapshot_created: bool = False
+    rollback_succeeded: bool = False
+    rollback_failed: bool = False
+    pre_existing_dirty_state: bool = False
+    agent_introduced_dirty_state: bool = False
+    rollback_checkpoint_id: Optional[str] = None
+    rollback_strategy: Optional[str] = None
+
+
+def detect_dirty_state(tool_runner: ToolWitnessRunner, repo_root: Path) -> Dict[str, Any]:
+    status = tool_runner.run(["git", "status", "--porcelain"], cwd=repo_root)
+    output = status.stdout.decode("utf-8", errors="replace")
+    return {"is_dirty": bool(output.strip()), "status": output}
+
+
+def create_rollback_checkpoint(
+    tool_runner: ToolWitnessRunner,
+    repo_root: Path,
+    *,
+    session_id: str,
+) -> Dict[str, Any]:
+    dirty = detect_dirty_state(tool_runner, repo_root)
+    checkpoint_label = f"gaia-agent-{session_id}"
+    stash = tool_runner.run(
+        ["git", "stash", "push", "--include-untracked", "-m", checkpoint_label],
+        cwd=repo_root,
+    )
+    stash_stdout = stash.stdout.decode("utf-8", errors="replace")
+    stash_created = stash.exit_code == 0 and "No local changes to save" not in stash_stdout
+    strategy = "stash" if stash_created else "artifact_snapshot"
+
+    artifact_payload = json.dumps(
+        {
+            "session_id": session_id,
+            "pre_status": dirty["status"],
+            "stash_output": stash_stdout,
+            "stash_exit_code": stash.exit_code,
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    checkpoint_id = tool_runner.ledger.store_artifact(artifact_payload, suffix=".snapshot.json")
+    event = tool_runner.ledger.append(
+        {
+            "phase": "snapshot",
+            "controller_decision": "checkpoint_created",
+            "failure_class": "pre_existing_dirty_state_blocked" if dirty["is_dirty"] else "",
+            "rationale_hash": checkpoint_id,
+            "verification_status": "pre_existing_dirty" if dirty["is_dirty"] else "clean",
+        }
+    )
+    return {
+        "checkpoint_id": checkpoint_id,
+        "checkpoint_label": checkpoint_label,
+        "strategy": strategy,
+        "pre_existing_dirty_state": dirty["is_dirty"],
+        "initial_status": dirty["status"],
+        "stash_created": stash_created,
+        "witness_event_id": event.get("event_id"),
+    }
+
+
+def restore_rollback_checkpoint(
+    tool_runner: ToolWitnessRunner,
+    repo_root: Path,
+    checkpoint: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not checkpoint:
+        return {"outcome": "rollback_not_needed"}
+    if checkpoint.get("strategy") == "stash" and checkpoint.get("stash_created"):
+        list_result = tool_runner.run(["git", "stash", "list"], cwd=repo_root)
+        listing = list_result.stdout.decode("utf-8", errors="replace").splitlines()
+        stash_ref = ""
+        label = str(checkpoint.get("checkpoint_label", ""))
+        for line in listing:
+            if label and label in line:
+                stash_ref = line.split(":", 1)[0]
+                break
+        if stash_ref:
+            tool_runner.run(["git", "restore", "--staged", "--worktree", "."], cwd=repo_root)
+            pop = tool_runner.run(["git", "stash", "pop", stash_ref], cwd=repo_root)
+            if pop.exit_code != 0:
+                return {"outcome": "rollback_failed", "failure_class": "rollback_failed_dirty_repo"}
+    else:
+        restore = tool_runner.run(["git", "restore", "--staged", "--worktree", "."], cwd=repo_root)
+        if restore.exit_code != 0:
+            return {"outcome": "rollback_failed", "failure_class": "rollback_failed_dirty_repo"}
+
+    after = detect_dirty_state(tool_runner, repo_root)
+    initial_status = str(checkpoint.get("initial_status", "")).strip()
+    restored_status = str(after.get("status", "")).strip()
+    expected_dirty = bool(checkpoint.get("pre_existing_dirty_state"))
+    rollback_ok = (restored_status == initial_status) or (not expected_dirty and not restored_status)
+    if rollback_ok:
+        return {"outcome": "rollback_succeeded", "dirty": after.get("is_dirty", False)}
+    return {"outcome": "rollback_failed", "failure_class": "rollback_failed_dirty_repo"}
+
+
+def build_provenance_note(payload: Dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def finalize_commit(
+    tool_runner: ToolWitnessRunner,
+    repo_root: Path,
+    *,
+    task_id: str,
+) -> Dict[str, Any]:
+    add = tool_runner.run(["git", "add", "-A"], cwd=repo_root)
+    if add.exit_code != 0:
+        return {"ok": False, "failure_class": "commit_finalization_failed"}
+    message = f"chore(agent): apply witnessed patch for {task_id}"
+    commit = tool_runner.run(["git", "commit", "-m", message], cwd=repo_root)
+    if commit.exit_code != 0:
+        return {"ok": False, "failure_class": "commit_finalization_failed"}
+    rev = tool_runner.run(["git", "rev-parse", "HEAD"], cwd=repo_root)
+    if rev.exit_code != 0:
+        return {"ok": False, "failure_class": "commit_finalization_failed"}
+    commit_hash = rev.stdout.decode("utf-8", errors="replace").strip()
+    return {"ok": True, "commit_hash": commit_hash, "message": message}
+
+
+def attach_git_note(
+    tool_runner: ToolWitnessRunner,
+    repo_root: Path,
+    *,
+    commit_hash: str,
+    note_payload: str,
+) -> Dict[str, Any]:
+    result = tool_runner.run(["git", "notes", "add", "-f", "-m", note_payload, commit_hash], cwd=repo_root)
+    if result.exit_code != 0:
+        return {"ok": False, "failure_class": "git_notes_failed"}
+    tool_runner.ledger.append({"phase": "finalization", "controller_decision": "git_note_attached"})
+    return {"ok": True}
+
+
+def verify_finalization(
+    tool_runner: ToolWitnessRunner,
+    repo_root: Path,
+    *,
+    commit_hash: str,
+    expected_witness_tip_hash: str,
+) -> Dict[str, Any]:
+    commit_exists = tool_runner.run(["git", "cat-file", "-e", f"{commit_hash}^{{commit}}"], cwd=repo_root)
+    note_show = tool_runner.run(["git", "notes", "show", commit_hash], cwd=repo_root)
+    if commit_exists.exit_code != 0:
+        return {"ok": False, "failure_class": "commit_finalization_failed"}
+    if note_show.exit_code != 0:
+        return {"ok": False, "failure_class": "partial_finalization_failure"}
+    try:
+        note_payload = json.loads(note_show.stdout.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return {"ok": False, "failure_class": "partial_finalization_failure"}
+    if note_payload.get("witness_tip_hash") != expected_witness_tip_hash:
+        return {"ok": False, "failure_class": "partial_finalization_failure"}
+    tool_runner.ledger.append({"phase": "finalization", "verification_status": "finalization_success"})
+    return {"ok": True}
+
+
 class VerificationRunner:
     """Deterministic verification sequence with failure classification."""
 
@@ -573,9 +736,16 @@ class VerificationRunner:
         self.retry_manager = retry_manager
 
     def run(self, repo_root: Path, patch_text: str, strict: bool = False) -> List[VerificationResult]:
+        session_id = uuid.uuid4().hex[:12]
+        dirty_state = DirtyStateTracker()
         patch_bytes = patch_text.encode("utf-8")
         patch_digest = self.tool_runner.ledger.store_artifact(patch_bytes, suffix=".patch")
         self.tool_runner.ledger.append({"phase": "proposal", "rationale_hash": patch_digest})
+        checkpoint = create_rollback_checkpoint(self.tool_runner, repo_root, session_id=session_id)
+        dirty_state.rollback_snapshot_created = True
+        dirty_state.rollback_checkpoint_id = checkpoint.get("checkpoint_id")
+        dirty_state.rollback_strategy = checkpoint.get("strategy")
+        dirty_state.pre_existing_dirty_state = bool(checkpoint.get("pre_existing_dirty_state"))
 
         steps: List[VerificationStep] = [
             VerificationStep("patch_check", ["git", "apply", "--check", "--whitespace=nowarn", "-"], required=True),
@@ -602,6 +772,12 @@ class VerificationRunner:
                 exit_code = 1
 
             if exit_code == 0:
+                if step.name == "patch_check":
+                    dirty_state.patch_check_passed = True
+                if step.name == "apply_patch":
+                    dirty_state.apply_patch_succeeded = True
+                if step.name == "change_detect":
+                    dirty_state.working_tree_changed = True
                 results.append(VerificationResult(step=step.name, passed=True, exit_code=0))
                 continue
 
@@ -623,6 +799,29 @@ class VerificationRunner:
                 }
             )
             if step.required:
+                if dirty_state.apply_patch_succeeded:
+                    rollback_result = restore_rollback_checkpoint(self.tool_runner, repo_root, checkpoint)
+                    outcome = rollback_result.get("outcome", "rollback_not_needed")
+                    self.tool_runner.ledger.append(
+                        {
+                            "phase": "rollback",
+                            "verification_status": outcome,
+                            "failure_class": rollback_result.get("failure_class", ""),
+                        }
+                    )
+                    dirty_state.rollback_succeeded = outcome == "rollback_succeeded"
+                    dirty_state.rollback_failed = outcome == "rollback_failed"
+                    dirty_check = detect_dirty_state(self.tool_runner, repo_root)
+                    dirty_state.agent_introduced_dirty_state = bool(dirty_check["is_dirty"]) and not dirty_state.pre_existing_dirty_state
+                    if dirty_state.rollback_failed:
+                        self.tool_runner.ledger.append(
+                            {
+                                "phase": "rollback",
+                                "verification_status": "failed",
+                                "controller_decision": "halt",
+                                "failure_class": "rollback_failed_dirty_repo",
+                            }
+                        )
                 break
 
         return results
@@ -672,8 +871,11 @@ class ControllerState:
     IDLE = "IDLE"
     PLAN = "PLAN"
     RESOLVE_EDIT = "RESOLVE_EDIT"
+    SNAPSHOT = "SNAPSHOT"
     VERIFY = "VERIFY"
     APPROVAL = "APPROVAL"
+    FINALIZE = "FINALIZE"
+    ROLLBACK = "ROLLBACK"
     COMMIT = "COMMIT"
     HALT = "HALT"
 
@@ -684,9 +886,12 @@ class DeterministicController:
     TRANSITIONS = {
         ControllerState.IDLE: {"task_received": ControllerState.PLAN},
         ControllerState.PLAN: {"intent_valid": ControllerState.RESOLVE_EDIT, "intent_invalid": ControllerState.HALT},
-        ControllerState.RESOLVE_EDIT: {"diff_ready": ControllerState.VERIFY, "selector_ambiguous": ControllerState.HALT},
-        ControllerState.VERIFY: {"verification_passed": ControllerState.APPROVAL, "verification_failed": ControllerState.HALT},
-        ControllerState.APPROVAL: {"approval_granted": ControllerState.COMMIT, "approval_denied": ControllerState.HALT},
+        ControllerState.RESOLVE_EDIT: {"diff_ready": ControllerState.SNAPSHOT, "selector_ambiguous": ControllerState.HALT},
+        ControllerState.SNAPSHOT: {"snapshot_ready": ControllerState.VERIFY, "snapshot_failed": ControllerState.HALT},
+        ControllerState.VERIFY: {"verification_passed": ControllerState.APPROVAL, "verification_failed": ControllerState.ROLLBACK},
+        ControllerState.ROLLBACK: {"rollback_succeeded": ControllerState.HALT, "rollback_failed": ControllerState.HALT},
+        ControllerState.APPROVAL: {"approval_granted": ControllerState.FINALIZE, "approval_denied": ControllerState.HALT},
+        ControllerState.FINALIZE: {"finalization_passed": ControllerState.IDLE, "finalization_failed": ControllerState.HALT},
         ControllerState.COMMIT: {"committed": ControllerState.IDLE, "commit_failed": ControllerState.HALT},
         ControllerState.HALT: {},
     }

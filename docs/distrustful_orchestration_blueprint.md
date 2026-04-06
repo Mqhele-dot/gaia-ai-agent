@@ -30,10 +30,29 @@ See `EDIT_INTENT_JSON_SCHEMA` + `EditIntent` dataclass.
 
 ## Controller/FSM design
 States:
-- `IDLE -> PLAN -> RESOLVE_EDIT -> VERIFY -> APPROVAL -> COMMIT -> IDLE`
-- Any failure class transitions to `HALT`.
+- `IDLE -> PLAN -> RESOLVE_EDIT -> SNAPSHOT -> VERIFY -> APPROVAL -> FINALIZE -> IDLE`
+- Recovery path: `VERIFY (required failure after apply) -> ROLLBACK -> HALT`
+- Any invalid transition is rejected by code.
 
 Transitions are explicit and code-defined in `DeterministicController.TRANSITIONS`; no model decides routine transitions.
+
+## Dirty-state model and rollback strategy
+- Explicit session tracking (`DirtyStateTracker`) records:
+  - `patch_check_passed`
+  - `apply_patch_succeeded`
+  - `working_tree_changed`
+  - `rollback_snapshot_created`
+  - rollback outcome flags
+  - `pre_existing_dirty_state`
+  - `agent_introduced_dirty_state`
+- Snapshot strategy before patch apply:
+  1. `git stash push --include-untracked -m gaia-agent-<session>`
+  2. structured snapshot artifact fallback
+- On required verification failure after apply:
+  - execute deterministic rollback helper
+  - verify with witnessed `git status --porcelain`
+  - emit `rollback_succeeded`, `rollback_failed`, or `rollback_not_needed`
+  - classify dirty rollback failure as `rollback_failed_dirty_repo`
 
 ## Deterministic diff emitter
 - Input: validated `EditIntent`.
@@ -80,6 +99,12 @@ Failure classes:
 - deterministic: patch/check/change detection
 - infra/tool: command unavailable/infra exit codes
 - flaky/environmental: other verifier failures
+- rollback/finalization additions:
+  - `pre_existing_dirty_state_blocked`
+  - `rollback_failed_dirty_repo`
+  - `commit_finalization_failed`
+  - `git_notes_failed`
+  - `partial_finalization_failure`
 
 ## Memory profiling notes
 Use `memory_profile_notes()` for built-in operator defaults:
@@ -94,11 +119,23 @@ Use `memory_profile_notes()` for built-in operator defaults:
 2. LLM proposes `EditIntent` (untrusted).
 3. Schema validation + deterministic selector resolution.
 4. Deterministic unified diff generation.
-5. Verification pipeline executes tools; all outputs witnessed.
-6. FSM advances only on witnessed success.
-7. Sensitive operation requires scoped approval token.
-8. Finalize with signed commit and git note that stores metadata:
+5. Snapshot phase creates rollback checkpoint + witness event.
+6. Verification pipeline executes tools; all outputs witnessed.
+7. On post-apply required failure, rollback executes before halt.
+8. Sensitive operation requires scoped approval token.
+9. Finalize with commit + git note metadata and verify both exist:
    - model + quantization + temperature + seed
    - prompt schema hash
    - witness tip hash
    - verification summary hash
+
+## Provenance finalization flow
+- `finalize_commit(...)` creates machine-labeled commit:
+  - `chore(agent): apply witnessed patch for <task-id>`
+- `build_provenance_note(...)` produces deterministic JSON note payload.
+- `attach_git_note(...)` attaches structured provenance with witnessed tool call.
+- `verify_finalization(...)` verifies:
+  - commit exists
+  - note exists
+  - note `witness_tip_hash` matches expected finalization tip
+- Commit success + note failure is classified as `partial_finalization_failure`.
