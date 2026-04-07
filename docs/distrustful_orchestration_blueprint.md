@@ -258,3 +258,60 @@ Use `memory_profile_notes()` for built-in operator defaults:
   - commit hash
   - witness tip hash
   - result bundle hash
+
+## Evaluation architecture and burn-in workflow
+- Evaluation module: `gaia/gaia_core/eval_harness.py`
+- Core eval types:
+  - `EvalScenario`
+  - `EvalRunConfig`
+  - `EvalRunResult`
+  - `EvalAggregateReport`
+  - `FailureInjectionConfig`
+  - `ResourceProfileSample`
+- Evaluation runs must invoke `TaskRuntimeService` via API entrypoint and never bypass runtime orchestration.
+- Burn-in mode repeats scenarios and aggregates:
+  - pass rate
+  - mean/median/max runtime
+  - average peak memory
+  - failure histograms
+  - status distributions
+  - rollback/approval/partial-finalization counts
+
+## Scenario categories
+- simple bounded Python edit
+- selector ambiguity halt
+- verification failure with rollback path
+- approval-required finalize
+- partial finalization (git note failure)
+- preflight failure
+- lock conflict
+- runtime policy violation
+- approval resume flow
+
+## Profiling fields
+- wall-clock runtime per run
+- peak process RSS estimate (if available)
+- artifact count
+- witness record count
+- model lifecycle transition count
+
+## Readiness scoring model
+- Dimensions:
+  - correctness
+  - rollback reliability
+  - provenance reliability
+  - runtime stability
+  - approval handling
+  - policy enforcement
+  - memory discipline
+- Output:
+  - per-dimension scores
+  - weighted overall score
+  - verdict (`prototype`, `build-ready`, `bounded-use ready`, `needs hardening`)
+
+## Recommended bounded-use thresholds
+- `>=95%` pass rate for simple bounded scenarios
+- `100%` invariant preservation
+- `0` silent dirty-state leaks
+- `0` unverified success claims
+- memory within configured local target
