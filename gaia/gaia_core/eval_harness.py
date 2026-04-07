@@ -124,6 +124,8 @@ class EvalAggregateReport:
     dirty_repo_policy_required_and_triggered_count: int
     clean_nominal_run_count: int
     override_assisted_run_count: int
+    nominal_selector_refinement_count: int
+    nominal_deterministic_narrowing_count: int
     unstable_scenarios: List[str]
     recommendation: str
     readiness_score: Dict[str, Any]
@@ -183,6 +185,8 @@ class TelemetryDigest:
     unexpected_failure_histogram: Dict[str, int]
     isolation_required_and_triggered_count: int
     dirty_repo_policy_required_and_triggered_count: int
+    nominal_selector_refinement_frequency: float
+    nominal_dirty_repo_override_frequency: float
     digest_hash: str
 
 
@@ -348,6 +352,8 @@ class EvalHarness:
         policy_required_triggered = 0
         clean_nominal_run_count = 0
         override_assisted_run_count = 0
+        nominal_selector_refinement_count = 0
+        nominal_deterministic_narrowing_count = 0
         refinement_distribution: Dict[str, int] = {}
         for item in results:
             status_dist[item.final_status] = status_dist.get(item.final_status, 0) + 1
@@ -389,6 +395,10 @@ class EvalHarness:
                     override_assisted_run_count += 1
                 elif item.success:
                     clean_nominal_run_count += 1
+                if flags.get("selector_refinement_attempts", 0) > 0:
+                    nominal_selector_refinement_count += 1
+                if flags.get("deterministic_selector_narrowing_used"):
+                    nominal_deterministic_narrowing_count += 1
             refinement_bucket = str(flags.get("selector_refinement_attempts", 0))
             refinement_distribution[refinement_bucket] = refinement_distribution.get(refinement_bucket, 0) + 1
 
@@ -439,6 +449,8 @@ class EvalHarness:
             dirty_repo_policy_required_and_triggered_count=policy_required_triggered,
             clean_nominal_run_count=clean_nominal_run_count,
             override_assisted_run_count=override_assisted_run_count,
+            nominal_selector_refinement_count=nominal_selector_refinement_count,
+            nominal_deterministic_narrowing_count=nominal_deterministic_narrowing_count,
             unstable_scenarios=sorted(unstable),
             recommendation=recommendation,
             readiness_score=readiness,
@@ -480,7 +492,12 @@ class EvalHarness:
         summary = output.get("operator_summary", {})
         if summary.get("final_status") and summary.get("final_status") != result.final_status:
             violations.append("summary_mismatch")
-        if flags.get("dirty_repo_policy_triggered") and result.final_status == TaskStatus.COMPLETED and not flags.get("dirty_repo_override_used"):
+        if (
+            flags.get("dirty_repo_policy_triggered")
+            and result.final_status == TaskStatus.COMPLETED
+            and flags.get("dirty_repo_blocking_policy") == "allow_mutation_with_explicit_override"
+            and not flags.get("dirty_repo_override_used")
+        ):
             violations.append("dirty_repo_policy_bypass")
         if flags.get("selector_refinement_attempts", 0) > 0 and result.final_status == TaskStatus.COMPLETED:
             # completed runs must still have proven selector uniqueness, indicated by no ambiguity halt.
@@ -597,6 +614,8 @@ class EvalHarness:
             unexpected_failure_histogram=dict(report.unexpected_failure_histogram),
             isolation_required_and_triggered_count=report.isolation_required_and_triggered_count,
             dirty_repo_policy_required_and_triggered_count=report.dirty_repo_policy_required_and_triggered_count,
+            nominal_selector_refinement_frequency=report.nominal_selector_refinement_count / max(1, report.clean_nominal_run_count + report.override_assisted_run_count),
+            nominal_dirty_repo_override_frequency=report.override_assisted_run_count / max(1, report.clean_nominal_run_count + report.override_assisted_run_count),
             digest_hash=digest_hash,
         )
 
@@ -644,6 +663,61 @@ class EvalHarness:
             clean_nominal_pass_rate=report.clean_nominal_run_count / max(1, report.clean_nominal_run_count + report.override_assisted_run_count),
             summary_hash=sha256_bytes(payload),
         )
+
+    def build_override_diagnostics(self, results: List[EvalRunResult], scenarios: List[EvalScenario]) -> Dict[str, Any]:
+        scenario_map = {item.scenario_id: item for item in scenarios}
+        rows: List[Dict[str, Any]] = []
+        by_override_type: Dict[str, int] = {}
+        by_scenario: Dict[str, int] = {}
+        for run in results:
+            scenario = scenario_map.get(run.scenario_id)
+            if not scenario or scenario.scenario_class != "nominal":
+                continue
+            flags = run.runtime_flags or {}
+            if not flags.get("dirty_repo_override_used"):
+                continue
+            override_type = "dirty_repo_override"
+            dirty_detail = dict(flags.get("dirty_repo_state_details", {}))
+            row = {
+                "scenario_id": run.scenario_id,
+                "override_type": override_type,
+                "triggering_condition": "dirty_repo_policy_triggered",
+                "dirty_repo_state_details": dirty_detail,
+                "blocking_policy": flags.get("dirty_repo_blocking_policy", "allow_mutation_with_explicit_override"),
+                "cleaner_automatic_path_possible": bool(dirty_detail.get("tracked_modifications", 0) == 0),
+            }
+            rows.append(row)
+            by_override_type[override_type] = by_override_type.get(override_type, 0) + 1
+            by_scenario[run.scenario_id] = by_scenario.get(run.scenario_id, 0) + 1
+        payload = {"rows": rows, "count_by_override_type": by_override_type, "count_by_scenario": by_scenario}
+        payload["diagnostics_hash"] = sha256_bytes(json.dumps(payload, sort_keys=True).encode("utf-8"))
+        return payload
+
+    def build_nominal_path_optimization_report(self, report: EvalAggregateReport, results: List[EvalRunResult], scenarios: List[EvalScenario]) -> Dict[str, Any]:
+        scenario_map = {item.scenario_id: item for item in scenarios}
+        override_causes: Dict[str, int] = {}
+        refinement_causes: Dict[str, int] = {}
+        for run in results:
+            scenario = scenario_map.get(run.scenario_id)
+            if not scenario or scenario.scenario_class != "nominal":
+                continue
+            flags = run.runtime_flags or {}
+            if flags.get("dirty_repo_override_used"):
+                cause = str(flags.get("dirty_repo_blocking_policy", "allow_mutation_with_explicit_override"))
+                override_causes[cause] = override_causes.get(cause, 0) + 1
+            if flags.get("selector_refinement_attempts", 0) > 0:
+                refinement_causes["selector_refinement_attempts"] = refinement_causes.get("selector_refinement_attempts", 0) + 1
+        output = {
+            "top_override_causes": override_causes,
+            "top_nominal_selector_refinement_causes": refinement_causes,
+            "clean_nominal_success_opportunities": max(0, report.override_assisted_run_count),
+            "applied_fixes": [
+                "dirty_repo_policy_precision_for_only_untracked_state",
+                "nominal_selector_exact_match_preference",
+            ],
+        }
+        output["report_hash"] = sha256_bytes(json.dumps(output, sort_keys=True).encode("utf-8"))
+        return output
 
     def evaluate_release_candidate(
         self,

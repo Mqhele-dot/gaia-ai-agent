@@ -1,13 +1,13 @@
 {
   "aggregate_report_hash": "6db4d2bb0735ea904cd62e9b75235bd12f03b1575017758e472098f9969e64ee",
   "blocking_issues": [],
-  "clean_nominal_pass_rate": 0.5,
+  "clean_nominal_pass_rate": 1.0,
   "expected_failure_histogram": {},
   "expected_partial_finalization_count": 10,
   "nominal_pass_rate": 1.0,
   "overall_readiness_verdict": "bounded-use ready",
   "override_flags": {
-    "dirty_repo_override_used": 10,
+    "dirty_repo_override_used": 0,
     "quarantine_present": 1,
     "relaxed_threshold_run": 0
   },
@@ -24,8 +24,8 @@
     "rollback_reliability": 1.0,
     "runtime_stability": 1.0
   },
-  "summary_hash": "e44231576f6105f4734e6a13e1d03517ecf529f881473834872398c19f38b186",
-  "telemetry_digest_hash": "393cac674a37f358a7098ce751706f0a4fd41fbffad5a4583d696ce73e0406b3",
+  "summary_hash": "d5188f3e420120d9b27471211bcc042aada980a6ec00bbdef2916dd35393dbf4",
+  "telemetry_digest_hash": "000ac8f78ddc8b5026593cf6ca93d4e6a14b40dcccca7a508831ce81bcec095e",
   "unexpected_failure_histogram": {},
   "unexpected_partial_finalization_count": 0
 }

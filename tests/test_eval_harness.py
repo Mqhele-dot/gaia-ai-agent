@@ -275,3 +275,37 @@ def test_release_summary_tracks_override_assisted_runs_not_clean() -> None:
     digest = harness.build_telemetry_digest(runs, report)
     summary = harness.build_release_summary(report, digest, ReleaseReadinessProfile())
     assert summary.clean_nominal_pass_rate == 0.0
+
+
+def test_override_diagnostics_capture_override_rows() -> None:
+    harness = EvalHarness(lambda _: FakeService())
+    scenarios = [EvalScenario("dirty_repo_override", "t", "obj", "f", TaskStatus.COMPLETED, False, False, [], scenario_class="nominal")]
+    runs = [
+        EvalRunResult(
+            "dirty_repo_override",
+            "r1",
+            TaskStatus.COMPLETED,
+            True,
+            "abc",
+            "tip",
+            None,
+            1,
+            1,
+            [],
+            [],
+            [],
+            runtime_flags={"dirty_repo_override_used": True, "dirty_repo_state_details": {"tracked_modifications": 0}, "dirty_repo_blocking_policy": "allow_mutation_with_explicit_override"},
+        )
+    ]
+    diag = harness.build_override_diagnostics(runs, scenarios)
+    assert diag["count_by_override_type"]["dirty_repo_override"] == 1
+
+
+def test_nominal_path_optimization_report_is_deterministic() -> None:
+    harness = EvalHarness(lambda _: FakeService())
+    scenarios = [EvalScenario("n1", "t", "obj", "f", TaskStatus.COMPLETED, False, False, [], scenario_class="nominal")]
+    runs = [EvalRunResult("n1", "r1", TaskStatus.COMPLETED, True, "abc", "tip", None, 1, 1, [], [], [], runtime_flags={})]
+    report = harness.aggregate(runs, suite_id="x", scenarios=scenarios)
+    one = harness.build_nominal_path_optimization_report(report, runs, scenarios)
+    two = harness.build_nominal_path_optimization_report(report, runs, scenarios)
+    assert one["report_hash"] == two["report_hash"]

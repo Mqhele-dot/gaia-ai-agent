@@ -378,6 +378,9 @@ Use `memory_profile_notes()` for built-in operator defaults:
   - `expected_partial_finalization_count` (informational protocol coverage)
   - `unexpected_partial_finalization_count` (release-blocking when above threshold)
 - Telemetry and summaries include expected vs unexpected failure histograms and policy/isolation requirement coverage counters.
+- Release campaigns also emit:
+  - `override_diagnostics.json` (per-run override details + counts by type/scenario)
+  - `nominal_path_optimization_report.json` (override/refinement causes and applied deterministic fixes)
 - Runtime preflight includes deterministic disk headroom validation (`min_artifact_free_space_mb`) before execution.
 - Profiles are deterministic and explicit; no hidden auto-tuning.
 
@@ -393,6 +396,11 @@ Use `memory_profile_notes()` for built-in operator defaults:
 - Scenarios may be triaged as `stable`, `unstable`, or `quarantined`.
 - Quarantined scenarios remain visible in aggregate reports with explicit reasons.
 - Override usage (e.g., dirty-repo override, relaxed threshold runs) is surfaced in release summaries and does not count as clean success.
+- Metric emphasis for operational maturity:
+  - `clean_nominal_pass_rate`
+  - `override_assisted_run_count`
+  - `nominal_selector_refinement_frequency`
+  - `nominal_dirty_repo_override_frequency`
 
 ## Final release-blocking invariants
 - no success without witnessed verification

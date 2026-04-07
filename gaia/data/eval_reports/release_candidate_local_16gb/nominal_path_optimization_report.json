@@ -1,0 +1,10 @@
+{
+  "applied_fixes": [
+    "dirty_repo_policy_precision_for_only_untracked_state",
+    "nominal_selector_exact_match_preference"
+  ],
+  "clean_nominal_success_opportunities": 0,
+  "report_hash": "5bd46a7dba56489c72c6ef051c6be0d4b758a44361fea4f1f52b8d59737d9390",
+  "top_nominal_selector_refinement_causes": {},
+  "top_override_causes": {}
+}

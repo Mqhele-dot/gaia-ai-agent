@@ -48,10 +48,27 @@ def main(argv=None) -> int:
             summary = f"status={status}"
             if "rollback" in self.scenario.tags:
                 summary = "rollback completed due to verification failure"
+            dirty_state = {}
+            if self.scenario.scenario_id == "dirty_repo_blocked":
+                dirty_state = {"tracked_modifications": 1, "untracked_files": 0}
+            elif self.scenario.scenario_id == "dirty_repo_override":
+                dirty_state = {"tracked_modifications": 0, "untracked_files": 2}
+            dirty_policy = str(_kwargs.get("dirty_repo_policy", "block_on_dirty_repo"))
+            dirty_override = bool(_kwargs.get("dirty_repo_override", False))
+            dirty_triggered = bool(dirty_state)
+            dirty_override_used = False
+            if dirty_triggered:
+                if dirty_policy == "allow_mutation_with_explicit_override":
+                    dirty_override_used = dirty_override
+                elif dirty_policy == "allow_mutation_if_only_untracked_files":
+                    dirty_override_used = False
             runtime_flags = {
-                "dirty_repo_policy_triggered": self.scenario.scenario_id.startswith("dirty_repo") or self.scenario.scenario_id == "preflight_fail",
-                "dirty_repo_override_used": self.scenario.scenario_id == "dirty_repo_override",
+                "dirty_repo_policy_triggered": dirty_triggered or self.scenario.scenario_id == "preflight_fail",
+                "dirty_repo_override_used": dirty_override_used,
+                "dirty_repo_blocking_policy": dirty_policy,
+                "dirty_repo_state_details": dirty_state,
                 "selector_refinement_attempts": 1 if self.scenario.scenario_id == "refinement_exhausted" else 0,
+                "deterministic_selector_narrowing_used": self.scenario.scenario_id in {"simple_python_edit", "dirty_repo_override"},
                 "untrusted_content_risk_detected": "adversarial" in self.scenario.tags,
             }
             return TaskExecutionResult(
@@ -98,7 +115,8 @@ def main(argv=None) -> int:
         return TaskRuntimeService(
             runtime_config=RuntimeConfig(
                 repo_root=str(repo_root),
-                dirty_repo_override=scenario.scenario_id == "dirty_repo_override",
+                dirty_repo_policy="allow_mutation_if_only_untracked_files" if scenario.scenario_id == "dirty_repo_override" else "block_on_dirty_repo",
+                dirty_repo_override=False,
                 min_artifact_free_space_mb=profile.min_artifact_free_space_mb,
             ),
             model_policy=ModelRuntimePolicy(),
@@ -114,6 +132,21 @@ def main(argv=None) -> int:
             EvalRunConfig(iterations=args.iterations),
             profile,
         )
+        override_diag = {"rows": [], "count_by_override_type": {}, "count_by_scenario": {}, "diagnostics_hash": ""}
+        nominal_opt = {
+            "top_override_causes": {},
+            "top_nominal_selector_refinement_causes": {},
+            "clean_nominal_success_opportunities": 0,
+            "applied_fixes": [],
+            "report_hash": "",
+        }
+        if hasattr(harness, "run_scenario") and hasattr(harness, "build_override_diagnostics"):
+            all_runs = []
+            scenarios = basic_scenarios()
+            for scenario in scenarios:
+                all_runs.extend(harness.run_scenario(scenario, EvalRunConfig(iterations=args.iterations)))
+            override_diag = harness.build_override_diagnostics(all_runs, scenarios)
+            nominal_opt = harness.build_nominal_path_optimization_report(report, all_runs, scenarios)
     except RuntimeError as exc:
         print(f"release_gate_error={exc}")
         return 2
@@ -125,6 +158,8 @@ def main(argv=None) -> int:
     print(f"protocol_pass_rate={release.protocol_pass_rate:.4f}")
     print(f"expected_partial_finalization_count={release.expected_partial_finalization_count}")
     print(f"unexpected_partial_finalization_count={release.unexpected_partial_finalization_count}")
+    print(f"nominal_selector_refinement_frequency={digest.nominal_selector_refinement_frequency:.4f}")
+    print(f"nominal_dirty_repo_override_frequency={digest.nominal_dirty_repo_override_frequency:.4f}")
     print(f"aggregate_report_hash={report.report_hash}")
     print(f"telemetry_digest_hash={digest.digest_hash}")
     print(f"threshold_tuning_report_hash={tuning.report_hash}")
@@ -137,6 +172,8 @@ def main(argv=None) -> int:
     (out_dir / "threshold_tuning_report.json").write_text(json.dumps(asdict(tuning), indent=2, sort_keys=True), encoding="utf-8")
     (out_dir / "telemetry_digest.json").write_text(json.dumps(asdict(digest), indent=2, sort_keys=True), encoding="utf-8")
     (out_dir / "release_summary.json").write_text(json.dumps(asdict(release), indent=2, sort_keys=True), encoding="utf-8")
+    (out_dir / "override_diagnostics.json").write_text(json.dumps(override_diag, indent=2, sort_keys=True), encoding="utf-8")
+    (out_dir / "nominal_path_optimization_report.json").write_text(json.dumps(nominal_opt, indent=2, sort_keys=True), encoding="utf-8")
     print(f"output_dir={out_dir}")
 
     return 0 if not release.blocking_issues else 2

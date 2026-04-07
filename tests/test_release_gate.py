@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from gaia.gaia_core import run_release_gate
 from gaia.gaia_core.eval_harness import EvalAggregateReport, ReleaseSummary, TelemetryDigest, ThresholdTuningReport
 
@@ -39,16 +41,29 @@ def test_release_gate_nonzero_on_blocking_failures(monkeypatch, tmp_path) -> Non
                 dirty_repo_policy_required_and_triggered_count=0,
                 clean_nominal_run_count=0,
                 override_assisted_run_count=0,
+                nominal_selector_refinement_count=0,
+                nominal_deterministic_narrowing_count=0,
                 unstable_scenarios=[],
                 recommendation="not_ready",
                 readiness_score={},
                 report_hash="rhash",
             )
             tuning = ThresholdTuningReport("local_16gb", {}, {}, [], 0.0, 0.0, 0.0, 0.0, 0.0, "thash")
-            digest = TelemetryDigest(1.0, 1.0, 1.0, [1.0, 1.0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, {}, {}, 0, 0, "dhash")
+            digest = TelemetryDigest(1.0, 1.0, 1.0, [1.0, 1.0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, {}, {}, 0, 0, 0.0, 0.0, "dhash")
             release = ReleaseSummary("needs hardening", {}, ["x"], ["fix"], "rhash", "dhash", {}, 0.0, 0.0, 0, 0, {}, {"x": 1}, 0.0, "shash")
             return report, tuning, digest, release
 
     monkeypatch.setattr(run_release_gate, "EvalHarness", FakeHarness)
     code = run_release_gate.main(["--profile", "local_16gb", "--iterations", "1", "--output-dir", str(tmp_path / "out")])
     assert code == 2
+
+
+def test_release_gate_reports_clean_nominal_improvement(tmp_path) -> None:
+    out_dir = tmp_path / "campaign"
+    code = run_release_gate.main(["--profile", "local_16gb", "--iterations", "1", "--output-dir", str(out_dir)])
+    assert code == 0
+    aggregate = json.loads((out_dir / "aggregate_report.json").read_text(encoding="utf-8"))
+    assert aggregate["clean_nominal_run_count"] >= 1
+    assert aggregate["override_assisted_run_count"] == 0
+    assert (out_dir / "override_diagnostics.json").exists()
+    assert (out_dir / "nominal_path_optimization_report.json").exists()
