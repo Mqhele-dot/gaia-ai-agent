@@ -24,8 +24,8 @@
     "rollback_reliability": 1.0,
     "runtime_stability": 1.0
   },
-  "summary_hash": "d5188f3e420120d9b27471211bcc042aada980a6ec00bbdef2916dd35393dbf4",
-  "telemetry_digest_hash": "000ac8f78ddc8b5026593cf6ca93d4e6a14b40dcccca7a508831ce81bcec095e",
+  "summary_hash": "887c0cfeadb65b5ed82421224712e7ce7c3431cb315863a58c59f5c1628c011a",
+  "telemetry_digest_hash": "13b175e8b71819dc02060b51efcb89ed4046dfeaac30b362fdd46cf6189d7da2",
   "unexpected_failure_histogram": {},
   "unexpected_partial_finalization_count": 0
 }

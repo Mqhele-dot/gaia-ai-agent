@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from gaia.gaia_core import run_release_gate
+from gaia.gaia_core import run_eval
 from gaia.gaia_core.eval_harness import EvalAggregateReport, ReleaseSummary, TelemetryDigest, ThresholdTuningReport
 
 
@@ -67,3 +68,8 @@ def test_release_gate_reports_clean_nominal_improvement(tmp_path) -> None:
     assert aggregate["override_assisted_run_count"] == 0
     assert (out_dir / "override_diagnostics.json").exists()
     assert (out_dir / "nominal_path_optimization_report.json").exists()
+
+
+def test_run_eval_release_candidate_uses_release_gate_path(tmp_path) -> None:
+    code = run_eval.main(["--suite", "release_candidate", "--iterations", "1", "--output-dir", str(tmp_path / "out")])
+    assert code == 0

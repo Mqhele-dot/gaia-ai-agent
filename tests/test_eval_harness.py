@@ -309,3 +309,17 @@ def test_nominal_path_optimization_report_is_deterministic() -> None:
     one = harness.build_nominal_path_optimization_report(report, runs, scenarios)
     two = harness.build_nominal_path_optimization_report(report, runs, scenarios)
     assert one["report_hash"] == two["report_hash"]
+
+
+def test_campaign_eval_mode_report_is_deterministic() -> None:
+    payload = {
+        "campaign_id": "campaign-1",
+        "final_status": "COMPLETED",
+        "completed_task_count": 10,
+        "failed_task_count": 1,
+        "successful_edit_count": 6,
+        "checkpoint_count": 4,
+    }
+    one = EvalHarness.evaluate_campaign_mode(payload)
+    two = EvalHarness.evaluate_campaign_mode(payload)
+    assert one.report_hash == two.report_hash

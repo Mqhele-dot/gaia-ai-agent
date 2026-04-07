@@ -209,6 +209,19 @@ class ReleaseSummary:
     summary_hash: str
 
 
+@dataclass(frozen=True)
+class CampaignEvalReport:
+    campaign_id: str
+    campaign_final_status: str
+    completed_task_count: int
+    failed_task_count: int
+    successful_edit_count: int
+    checkpoint_count: int
+    stability_score: float
+    fatigue_triggered: bool
+    report_hash: str
+
+
 class ArtifactRetentionManager:
     """Retention policy executor for evaluation artifacts (never touches witness ledger)."""
 
@@ -733,6 +746,34 @@ class EvalHarness:
         digest = self.build_telemetry_digest(runs, report)
         release_summary = self.build_release_summary(report, digest, profile)
         return report, tuning, digest, release_summary
+
+    @staticmethod
+    def evaluate_campaign_mode(campaign_payload: Dict[str, Any]) -> CampaignEvalReport:
+        result = campaign_payload.get("result", campaign_payload)
+        completed = int(result.get("completed_task_count", 0))
+        failed = int(result.get("failed_task_count", 0))
+        checkpoints = int(result.get("checkpoint_count", 0))
+        final_status = str(result.get("final_status", "HALTED"))
+        stability = completed / max(1, completed + failed)
+        fatigue = final_status == "HALTED"
+        payload = {
+            "campaign_id": result.get("campaign_id", ""),
+            "status": final_status,
+            "completed": completed,
+            "failed": failed,
+            "checkpoints": checkpoints,
+        }
+        return CampaignEvalReport(
+            campaign_id=str(result.get("campaign_id", "")),
+            campaign_final_status=final_status,
+            completed_task_count=completed,
+            failed_task_count=failed,
+            successful_edit_count=int(result.get("successful_edit_count", 0)),
+            checkpoint_count=checkpoints,
+            stability_score=stability,
+            fatigue_triggered=fatigue,
+            report_hash=sha256_bytes(json.dumps(payload, sort_keys=True).encode("utf-8")),
+        )
 
 
 def resolve_release_profile(profile_name: str) -> ReleaseReadinessProfile:

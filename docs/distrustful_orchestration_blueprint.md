@@ -410,3 +410,40 @@ Use `memory_profile_notes()` for built-in operator defaults:
 - no untrusted-content execution-path promotion
 - no selector ambiguity mutation without unique proof
 - no hidden partial failures in release summaries
+
+## Campaign supervisor architecture (long-run bounded sessions)
+- `campaign_supervisor.py` adds a higher-level `CampaignSupervisor` that chains many short bounded tasks while preserving task-level distrustful guarantees.
+- Campaign objects include:
+  - `CampaignRequest`, `CampaignPlan`, `CampaignStep`
+  - `CampaignState`, `CampaignCheckpoint`
+  - `CampaignPolicy`, `CampaignTelemetry`, `CampaignResult`
+- Runtime distinction:
+  - per-task runtime remains bounded and enforced by `TaskRuntimeService` / `TaskExecutionEngine`
+  - campaign runtime budget spans many bounded tasks (`total_time_budget_s`, e.g., 4–5 hours)
+- Deterministic supervisor loop:
+  - select next explicit backlog task
+  - execute bounded task through runtime service
+  - update deterministic counters and telemetry
+  - checkpoint/replan/test/halt by policy thresholds
+- Fatigue/halt rules include:
+  - time budget exhaustion
+  - consecutive failure/no-op limits
+  - selector ambiguity fatigue
+  - partial-finalization budget
+  - disk pressure budget
+- Checkpoint strategy:
+  - periodic checkpoints every `checkpoint_interval_tasks`
+  - checkpoint before replanning and before halt/finalization
+  - checkpoint payloads are hash-addressable campaign artifacts
+- Test cadence strategy:
+  - smoke verification every `smoke_test_interval_tasks`
+  - fuller verification every `full_test_interval_tasks`
+  - all through witnessed bounded runtime paths
+- Approval model:
+  - campaign pauses on `AWAITING_APPROVAL`
+  - resume requires explicit approval token in subsequent bounded task execution
+- Campaign telemetry model includes:
+  - progress counters (tasks, edits, failures, remaining backlog)
+  - ambiguity/refinement/rollback/partial-finalization counters
+  - checkpoint/smoke/full-test counts
+  - artifact/witness growth counters
