@@ -34,15 +34,16 @@ class FakeLedger:
 
 
 class FakeToolRunner:
-    def __init__(self, *, notes_fail: bool = False) -> None:
+    def __init__(self, *, notes_fail: bool = False, dirty_status: bytes = b"") -> None:
         self.ledger = FakeLedger()
         self.model_fingerprint = "model:test"
         self.notes_fail = notes_fail
+        self.dirty_status = dirty_status
 
     def run(self, command, cwd, max_capture=200000, input_data=None):
         cmd = list(command)
         if cmd[:3] == ["git", "status", "--porcelain"]:
-            return _tool_result(cmd, 0, b"", b"")
+            return _tool_result(cmd, 0, self.dirty_status, b"")
         if cmd[:2] == ["git", "stash"]:
             return _tool_result(cmd, 0, b"No local changes to save\n", b"")
         if cmd[:2] == ["git", "add"]:
@@ -183,6 +184,7 @@ def test_execution_halts_on_ambiguity_after_refinement_budget(tmp_path: Path) ->
     )
     result = engine.execute(_request(tmp_path), proposed_plan=_plan("task-1", approval=False))
     assert result.final_status == TaskStatus.HALTED
+    assert result.runtime_flags["selector_refinement_attempts"] >= 1
 
 
 def test_successful_single_edit_task_completes(tmp_path: Path) -> None:
@@ -305,3 +307,43 @@ def test_partial_finalization_failure_when_notes_fail(tmp_path: Path) -> None:
     )
     result = engine.execute(_request(tmp_path, approval_required=True), proposed_plan=_plan("task-1", approval=True), approval_token=token)
     assert result.final_status == TaskStatus.PARTIAL
+
+
+def test_dirty_repo_block_policy_halts_before_mutation(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("def target():\n    return 1\n", encoding="utf-8")
+    engine = TaskExecutionEngine(
+        planner=BoundedPlanner(max_steps=5),
+        diff_emitter=DeterministicDiffEmitter(),
+        verification_runner=FakeVerificationRunner(),
+        tool_runner=FakeToolRunner(dirty_status=b"M sample.py\n"),
+        approval_tokens=ApprovalTokenManager(secret=b"k" * 32),
+        sanitizer=InjectionSanitizer(),
+        intent_provider=_intent_provider,
+    )
+    result = engine.execute(_request(tmp_path), proposed_plan=_plan("task-1", approval=False), dirty_repo_policy="block_on_dirty_repo")
+    assert result.final_status == TaskStatus.HALTED
+    assert result.runtime_flags["dirty_repo_policy_triggered"]
+
+
+def test_dirty_repo_override_policy_allows_mutation(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("def target():\n    return 1\n", encoding="utf-8")
+    token_mgr = ApprovalTokenManager(secret=b"k" * 32)
+    token = token_mgr.issue(["git.commit"], ttl_s=60)
+    engine = TaskExecutionEngine(
+        planner=BoundedPlanner(max_steps=5),
+        diff_emitter=DeterministicDiffEmitter(),
+        verification_runner=FakeVerificationRunner(),
+        tool_runner=FakeToolRunner(dirty_status=b"M sample.py\n"),
+        approval_tokens=token_mgr,
+        sanitizer=InjectionSanitizer(),
+        intent_provider=_intent_provider,
+    )
+    result = engine.execute(
+        _request(tmp_path, approval_required=True),
+        proposed_plan=_plan("task-1", approval=True),
+        approval_token=token,
+        dirty_repo_policy="allow_mutation_with_explicit_override",
+        dirty_repo_override=True,
+    )
+    assert result.final_status == TaskStatus.COMPLETED
+    assert result.runtime_flags["dirty_repo_override_used"]

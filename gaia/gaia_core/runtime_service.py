@@ -32,6 +32,9 @@ class RuntimeConfig:
     enable_finalize_by_default: bool = True
     artifact_retention_policy: str = "keep"
     approval_required_default: bool = True
+    dirty_repo_policy: str = "block_on_dirty_repo"
+    dirty_repo_override: bool = False
+    untrusted_risk_block_threshold: int = 3
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,7 @@ class SessionStateSnapshot:
     witness_tip_hash: str
     approval_pending: bool
     finalization_occurred: bool
+    runtime_flags: Dict[str, Any]
     timestamp: str
 
 
@@ -125,6 +129,8 @@ class TaskRuntimeService:
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self.model_lifecycle = ModelLifecycleController(model_policy, event_sink=self._runtime_event)
         self.engine.model_lifecycle = self.model_lifecycle
+        if hasattr(self.engine, "policy"):
+            self.engine.policy.risk_block_threshold = runtime_config.untrusted_risk_block_threshold
         self._snapshot_dir = self.repo_root / "gaia" / "data" / "runtime_sessions"
         self._snapshot_dir.mkdir(parents=True, exist_ok=True)
 
@@ -171,7 +177,13 @@ class TaskRuntimeService:
             )
             self._sessions[session.session_id] = {"request": request, "plan": plan, "session": session}
             self.model_lifecycle.enter_reasoning_window("primary_reasoning_model")
-            result = self.engine.execute(request, proposed_plan=plan, approval_token=approval_token)
+            result = self.engine.execute(
+                request,
+                proposed_plan=plan,
+                approval_token=approval_token,
+                dirty_repo_policy=self.runtime_config.dirty_repo_policy,
+                dirty_repo_override=self.runtime_config.dirty_repo_override,
+            )
             self.model_lifecycle.exit_reasoning_window("primary_reasoning_model")
             if result.final_status in {TaskStatus.COMPLETED, TaskStatus.PARTIAL, TaskStatus.FAILED, TaskStatus.HALTED}:
                 self.model_lifecycle.mark_model_unloaded("primary_reasoning_model")
@@ -257,6 +269,7 @@ class TaskRuntimeService:
             witness_tip_hash=result.witness_tip_hash,
             approval_pending=result.final_status == TaskStatus.AWAITING_APPROVAL,
             finalization_occurred=bool(result.commit_hash),
+            runtime_flags=dict(result.runtime_flags),
             timestamp=_utc_now(),
         )
         payload = json.dumps(asdict(snapshot), sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -287,6 +300,7 @@ class TaskRuntimeService:
                 "witness_tip_hash": result.witness_tip_hash,
             },
             "summary": result.summary,
+            "runtime_flags": dict(result.runtime_flags),
             "artifact_refs": [asdict(item) for item in result.artifacts],
             "snapshot_hash": snapshot_hash,
             "failure_class": "runtime_policy_violation" if result.final_status in {TaskStatus.FAILED, TaskStatus.HALTED} else "",
@@ -304,6 +318,7 @@ class TaskRuntimeService:
             "rollback_occurred": "rollback" in result.summary.lower(),
             "commit_finalization_succeeded": bool(result.commit_hash),
             "git_note_provenance_succeeded": result.final_status == TaskStatus.COMPLETED,
+            "runtime_flags": dict(result.runtime_flags),
             "commit_hash": result.commit_hash,
             "witness_tip_hash": result.witness_tip_hash,
             "result_bundle_hash": bundle_hash,

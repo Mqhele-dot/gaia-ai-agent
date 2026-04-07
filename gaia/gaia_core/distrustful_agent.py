@@ -348,6 +348,8 @@ class SanitizedContent:
     raw_sha256: str
     sanitized_text: str
     high_risk_flags: List[str]
+    risk_score: int = 0
+    blocked: bool = False
 
 
 class InjectionSanitizer:
@@ -357,11 +359,13 @@ class InjectionSanitizer:
         "override_instructions": re.compile(r"ignore (all|previous|prior) instructions", re.I),
         "fake_tool_call": re.compile(r"<(tool|function)_call>|```(json|xml)", re.I),
         "credential_exfil": re.compile(r"(api[_-]?key|token|secret|password)", re.I),
+        "approval_social_engineering": re.compile(r"(share|send|reveal).*(approval|token)", re.I),
+        "imperative_burst": re.compile(r"\b(run|execute|override|delete|ignore)\b(?:\W+\w+){0,3}\W+\b(run|execute|override|delete|ignore)\b", re.I),
     }
 
     TOOL_CALL_SYNTAX = re.compile(r"\b(call_tool|tool_call|function_call)\b", re.I)
 
-    def sanitize(self, text: str, provenance: str) -> SanitizedContent:
+    def sanitize(self, text: str, provenance: str, *, risk_block_threshold: int = 3) -> SanitizedContent:
         flags: List[str] = []
         for name, pattern in self.RISK_PATTERNS.items():
             if pattern.search(text):
@@ -369,13 +373,69 @@ class InjectionSanitizer:
 
         neutralized = self.TOOL_CALL_SYNTAX.sub("[neutralized_call_token]", text)
         neutralized = neutralized.replace("<", "⟨").replace(">", "⟩")
-        neutralized = f"[UNTRUSTED:{provenance}]\n{neutralized}"
+        neutralized = (
+            f"<untrusted_content source=\"{provenance}\">\n"
+            f"[UNTRUSTED:{provenance}]\n{neutralized}\n"
+            f"</untrusted_content>"
+        )
+        risk_score = len(flags)
+        blocked = risk_score >= risk_block_threshold
 
         return SanitizedContent(
             provenance=provenance,
             raw_sha256=sha256_bytes(text.encode("utf-8")),
             sanitized_text=neutralized,
             high_risk_flags=flags,
+            risk_score=risk_score,
+            blocked=blocked,
+        )
+
+
+@dataclass(frozen=True)
+class PromptContext:
+    system_instructions: str
+    task_instructions: str
+    trusted_runtime_facts: Dict[str, Any]
+    untrusted_channels: List[Dict[str, Any]]
+
+
+class PromptContextBuilder:
+    """Keep trusted and untrusted context structurally separated."""
+
+    def __init__(self) -> None:
+        self._system = ""
+        self._task = ""
+        self._facts: Dict[str, Any] = {}
+        self._untrusted: List[Dict[str, Any]] = []
+
+    def set_system_instructions(self, text: str) -> None:
+        self._system = text
+
+    def set_task_instructions(self, text: str) -> None:
+        self._task = text
+
+    def set_trusted_runtime_facts(self, facts: Dict[str, Any]) -> None:
+        self._facts = dict(facts)
+
+    def add_untrusted_content(self, sanitized: SanitizedContent) -> None:
+        self._untrusted.append(
+            {
+                "source": sanitized.provenance,
+                "raw_hash": sanitized.raw_sha256,
+                "sanitized_hash": sha256_bytes(sanitized.sanitized_text.encode("utf-8")),
+                "risk_flags": list(sanitized.high_risk_flags),
+                "risk_score": sanitized.risk_score,
+                "blocked": sanitized.blocked,
+                "content": sanitized.sanitized_text,
+            }
+        )
+
+    def build(self) -> PromptContext:
+        return PromptContext(
+            system_instructions=self._system,
+            task_instructions=self._task,
+            trusted_runtime_facts=dict(self._facts),
+            untrusted_channels=list(self._untrusted),
         )
 
 
@@ -1049,6 +1109,7 @@ class TaskExecutionResult:
     witness_tip_hash: str
     summary: str
     artifacts: List[TaskArtifactSummary]
+    runtime_flags: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1059,6 +1120,18 @@ class TaskPolicyLimits:
     max_context_bytes: int = 32_000
     max_task_runtime_s: int = 120
     max_approvals_per_task: int = 1
+    risk_block_threshold: int = 3
+
+
+@dataclass(frozen=True)
+class SelectorRefinementRequest:
+    file_path_confirmation: str
+    enclosing_symbol: str
+    ast_path_repair: Optional[str]
+    preceding_unique_line: str
+    following_unique_line: str
+    narrowed_anchor_text: str
+    exclude_commented_dead_code: bool = True
 
 
 class BoundedPlanner:
@@ -1145,6 +1218,8 @@ class TaskExecutionEngine:
         *,
         proposed_plan: Optional[TaskPlan] = None,
         approval_token: Optional[str] = None,
+        dirty_repo_policy: str = "block_on_dirty_repo",
+        dirty_repo_override: bool = False,
     ) -> TaskExecutionResult:
         started = time.time()
         completed_steps: List[str] = []
@@ -1154,10 +1229,45 @@ class TaskExecutionEngine:
         intent: Optional[EditIntent] = None
         status = TaskStatus.PENDING
         failed_step: Optional[str] = None
+        runtime_flags: Dict[str, Any] = {
+            "untrusted_content_risk_detected": False,
+            "dirty_repo_policy_triggered": False,
+            "dirty_repo_override_used": False,
+            "selector_refinement_used": False,
+            "selector_refinement_attempts": 0,
+            "rollback_occurred": False,
+            "partial_finalization_occurred": False,
+            "approval_override_used": False,
+        }
 
         plan = self.planner.build_plan(request, proposed_plan=proposed_plan)
         self._task_event("task_plan_created", request.task_id, None, "plan_ready")
         status = TaskStatus.PLANNED
+        dirty_outcome = self._enforce_dirty_repo_policy(
+            policy=dirty_repo_policy,
+            dirty_state=detect_dirty_state(self.tool_runner, Path(request.repo_root)),
+            override=dirty_repo_override,
+        )
+        runtime_flags.update(dirty_outcome)
+        if dirty_outcome.get("blocked"):
+            self._task_event(
+                "task_halted",
+                request.task_id,
+                None,
+                "dirty_repo_policy_blocked",
+                failure_class="pre_existing_dirty_state_blocked",
+            )
+            return TaskExecutionResult(
+                task_id=request.task_id,
+                final_status=TaskStatus.HALTED,
+                completed_steps=[],
+                failed_step=None,
+                commit_hash=None,
+                witness_tip_hash=self.tool_runner.ledger.tip_hash,
+                summary="status=HALTED; reason=dirty_repo_policy",
+                artifacts=[],
+                runtime_flags=runtime_flags,
+            )
 
         for step in plan.bounded_steps[: self.policy.max_task_steps]:
             if time.time() - started > self.policy.max_task_runtime_s:
@@ -1182,6 +1292,8 @@ class TaskExecutionEngine:
                 elif step.step_type == "read_file":
                     step_artifacts = self._execute_read_file_step(request, step)
                     artifacts.extend(step_artifacts)
+                    if any(item.note.startswith("risk:") for item in step_artifacts):
+                        runtime_flags["untrusted_content_risk_detected"] = True
                 elif step.step_type == "plan_edit":
                     intent = self._get_edit_intent(request, step)
                 elif step.step_type == "apply_edit":
@@ -1195,6 +1307,8 @@ class TaskExecutionEngine:
                 elif step.step_type == "finalize_change":
                     status, commit_hash = self._execute_finalize_step(request, step, current_patch, approval_token)
                     if status in {TaskStatus.AWAITING_APPROVAL, TaskStatus.HALTED, TaskStatus.PARTIAL, TaskStatus.FAILED}:
+                        if status == TaskStatus.PARTIAL:
+                            runtime_flags["partial_finalization_occurred"] = True
                         failed_step = step.step_id
                         self._task_event("task_step_failed", request.task_id, step.step_id, status.lower())
                         break
@@ -1203,12 +1317,29 @@ class TaskExecutionEngine:
                 else:
                     raise ValueError(f"Unsupported step type: {step.step_type}")
             except SelectorAmbiguityError:
-                refined_intent = self._attempt_refinement(request, intent)
+                narrowed_intent = self._deterministic_selector_narrowing(intent)
+                if narrowed_intent is not None:
+                    try:
+                        current_patch = self._execute_apply_edit(request, step, narrowed_intent)
+                        intent = narrowed_intent
+                        self._task_event("task_step_completed", request.task_id, step.step_id, "selector_narrowed_deterministically")
+                        continue
+                    except SelectorAmbiguityError:
+                        pass
+                refined_intent, attempts = self._attempt_refinement(request, intent)
+                runtime_flags["selector_refinement_attempts"] += attempts
                 if refined_intent is None:
                     failed_step = step.step_id
                     status = TaskStatus.HALTED
-                    self._task_event("task_halted", request.task_id, step.step_id, "selector_ambiguous")
+                    self._task_event(
+                        "task_halted",
+                        request.task_id,
+                        step.step_id,
+                        "selector_ambiguous",
+                        failure_class="selector_refinement_exhausted",
+                    )
                     break
+                runtime_flags["selector_refinement_used"] = True
                 intent = refined_intent
                 current_patch = self._execute_apply_edit(request, step, intent)
             except Exception as exc:
@@ -1236,6 +1367,7 @@ class TaskExecutionEngine:
             witness_tip_hash=self.tool_runner.ledger.tip_hash,
             summary=summary,
             artifacts=artifacts,
+            runtime_flags=runtime_flags,
         )
 
     def _execute_read_file_step(self, request: TaskRequest, step: TaskStep) -> List[TaskArtifactSummary]:
@@ -1245,9 +1377,22 @@ class TaskExecutionEngine:
             file_path = (Path(request.repo_root) / rel_path).resolve()
             text = file_path.read_text(encoding="utf-8")
             bounded = text[: self.policy.max_context_bytes]
-            sanitized = self.sanitizer.sanitize(bounded, provenance=f"file:{rel_path}")
+            sanitized = self.sanitizer.sanitize(
+                bounded,
+                provenance=f"file:{rel_path}",
+                risk_block_threshold=self.policy.risk_block_threshold,
+            )
             digest = self.tool_runner.ledger.store_artifact(sanitized.sanitized_text.encode("utf-8"), suffix=".sanitized.txt")
-            summaries.append(TaskArtifactSummary(digest, "read_file", rel_path))
+            note = rel_path if not sanitized.high_risk_flags else f"risk:{','.join(sanitized.high_risk_flags)}"
+            summaries.append(TaskArtifactSummary(digest, "read_file", note))
+            if sanitized.high_risk_flags:
+                self._task_event(
+                    "task_step_started",
+                    request.task_id,
+                    step.step_id,
+                    "untrusted_risk_detected",
+                    failure_class="untrusted_content_risk",
+                )
         return summaries
 
     def _get_edit_intent(self, request: TaskRequest, step: TaskStep) -> EditIntent:
@@ -1269,17 +1414,35 @@ class TaskExecutionEngine:
             raise RuntimeError("verification_failed")
         return patch
 
-    def _attempt_refinement(self, request: TaskRequest, current_intent: Optional[EditIntent]) -> Optional[EditIntent]:
+    def _attempt_refinement(self, request: TaskRequest, current_intent: Optional[EditIntent]) -> Tuple[Optional[EditIntent], int]:
         if current_intent is None or self.refinement_provider is None:
-            return None
+            return None, 0
+        attempts = 0
         for attempt in range(self.policy.max_refinement_attempts):
+            attempts += 1
+            self._task_event("task_step_started", request.task_id, None, "selector_refinement_attempt")
             refined = self.refinement_provider(request, current_intent, attempt)
             if not refined:
                 continue
-            candidate = refined if isinstance(refined, EditIntent) else EditIntent(**refined)
+            if isinstance(refined, SelectorRefinementRequest):
+                payload = {
+                    "file_path": refined.file_path_confirmation or current_intent.file_path,
+                    "language": current_intent.language,
+                    "selector_kind": "anchor" if refined.narrowed_anchor_text else current_intent.selector_kind,
+                    "symbol_name": refined.enclosing_symbol or current_intent.symbol_name,
+                    "anchor_text": refined.narrowed_anchor_text or current_intent.anchor_text,
+                    "scope_hint": current_intent.scope_hint,
+                    "ast_path": refined.ast_path_repair if refined.ast_path_repair is not None else current_intent.ast_path,
+                    "replacement_snippet": current_intent.replacement_snippet,
+                    "postconditions": current_intent.postconditions,
+                    "rationale_summary": current_intent.rationale_summary,
+                }
+                candidate = EditIntent(**payload)
+            else:
+                candidate = refined if isinstance(refined, EditIntent) else EditIntent(**refined)
             candidate.validate()
-            return candidate
-        return None
+            return candidate, attempts
+        return None, attempts
 
     def _execute_finalize_step(
         self,
@@ -1327,6 +1490,64 @@ class TaskExecutionEngine:
         if not verified.get("ok"):
             return TaskStatus.PARTIAL, commit_hash
         return TaskStatus.RUNNING, commit_hash
+
+    @staticmethod
+    def _deterministic_selector_narrowing(intent: Optional[EditIntent]) -> Optional[EditIntent]:
+        if intent is None:
+            return None
+        if intent.selector_kind == "anchor":
+            anchor = intent.anchor_text.strip()
+            if len(anchor) < 4 or anchor in {":", "=", "{", "}"}:
+                return None
+            return EditIntent(
+                file_path=intent.file_path,
+                language=intent.language,
+                selector_kind="anchor",
+                symbol_name=intent.symbol_name,
+                anchor_text=anchor,
+                scope_hint=intent.scope_hint,
+                ast_path=intent.ast_path,
+                replacement_snippet=intent.replacement_snippet,
+                postconditions=intent.postconditions,
+                rationale_summary=intent.rationale_summary,
+            )
+        if intent.selector_kind == "symbol" and intent.symbol_name.strip():
+            return EditIntent(
+                file_path=intent.file_path,
+                language=intent.language,
+                selector_kind="symbol",
+                symbol_name=intent.symbol_name.strip(),
+                anchor_text=intent.anchor_text,
+                scope_hint=intent.scope_hint,
+                ast_path=intent.ast_path,
+                replacement_snippet=intent.replacement_snippet,
+                postconditions=intent.postconditions,
+                rationale_summary=intent.rationale_summary,
+            )
+        return None
+
+    @staticmethod
+    def _enforce_dirty_repo_policy(policy: str, dirty_state: Dict[str, Any], override: bool) -> Dict[str, Any]:
+        status_text = str(dirty_state.get("status", ""))
+        is_dirty = bool(dirty_state.get("is_dirty"))
+        only_untracked = bool(status_text.strip()) and all(line.startswith("??") for line in status_text.splitlines())
+        if not is_dirty:
+            return {"dirty_repo_policy_triggered": False, "dirty_repo_override_used": False, "blocked": False}
+        if policy == "block_on_dirty_repo":
+            return {"dirty_repo_policy_triggered": True, "dirty_repo_override_used": False, "blocked": True}
+        if policy == "allow_read_only_on_dirty_repo":
+            return {"dirty_repo_policy_triggered": True, "dirty_repo_override_used": False, "blocked": False}
+        if policy == "allow_mutation_with_explicit_override":
+            return {
+                "dirty_repo_policy_triggered": True,
+                "dirty_repo_override_used": bool(override),
+                "blocked": not bool(override),
+            }
+        if policy == "allow_mutation_if_only_untracked_files":
+            return {"dirty_repo_policy_triggered": True, "dirty_repo_override_used": False, "blocked": not only_untracked}
+        if policy == "require_approval_on_dirty_repo":
+            return {"dirty_repo_policy_triggered": True, "dirty_repo_override_used": False, "blocked": False}
+        return {"dirty_repo_policy_triggered": True, "dirty_repo_override_used": False, "blocked": True}
 
     def _task_event(
         self,

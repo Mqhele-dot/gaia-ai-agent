@@ -315,3 +315,39 @@ Use `memory_profile_notes()` for built-in operator defaults:
 - `0` silent dirty-state leaks
 - `0` unverified success claims
 - memory within configured local target
+
+## Structural untrusted-content isolation model
+- Untrusted content is wrapped structurally:
+  - `<untrusted_content source=\"...\"> ... </untrusted_content>`
+- `PromptContextBuilder` keeps channels separated:
+  - `system_instructions`
+  - `task_instructions`
+  - `trusted_runtime_facts`
+  - `untrusted_channels[]` (with hashes, risk flags, score, blocked flag)
+- Raw and sanitized hashes are preserved for forensic comparison.
+
+## Dirty repo policy matrix
+- Supported policies:
+  - `block_on_dirty_repo`
+  - `allow_read_only_on_dirty_repo`
+  - `allow_mutation_with_explicit_override`
+  - `allow_mutation_if_only_untracked_files`
+  - `require_approval_on_dirty_repo`
+- Policy outcome is surfaced in:
+  - `TaskExecutionResult.runtime_flags`
+  - session snapshot
+  - result bundle
+  - operator summary
+
+## Selector refinement flow
+- Deterministic narrowing first (code heuristics), then bounded refinement attempts.
+- Refinement remains locator-only and witnessed.
+- Exhaustion emits explicit `selector_refinement_exhausted` failure class and halts safely.
+
+## Adversarial scenario categories
+- malicious instruction-overrides in file content
+- fake tool-call markup in content
+- credential exfiltration bait phrases
+- repeated ambiguity with refinement exhaustion
+- dirty-repo blocked/override policy cases
+- structural isolation success path

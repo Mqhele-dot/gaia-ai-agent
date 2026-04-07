@@ -38,7 +38,7 @@ class FakeEngine:
         self.calls = []
         self.model_lifecycle = None
 
-    def execute(self, request, proposed_plan=None, approval_token=None):
+    def execute(self, request, proposed_plan=None, approval_token=None, **kwargs):
         self.calls.append((request.task_id, [s.step_id for s in proposed_plan.bounded_steps], approval_token))
         status = self.statuses.pop(0)
         completed = ["s1", "s2", "s3"] if status != TaskStatus.AWAITING_APPROVAL else ["s1", "s2", "s3"]
@@ -52,6 +52,7 @@ class FakeEngine:
             witness_tip_hash=self.tool_runner.ledger.tip_hash,
             summary=f"status={status}",
             artifacts=[],
+            runtime_flags={"dirty_repo_policy_triggered": status == TaskStatus.HALTED, "selector_refinement_attempts": 1},
         )
 
 
@@ -179,3 +180,4 @@ def test_operator_summary_uses_deterministic_result_fields(tmp_path: Path) -> No
     summary = out["operator_summary"]
     assert summary["final_status"] == TaskStatus.PARTIAL
     assert "result_bundle_hash" in summary
+    assert "runtime_flags" in summary
