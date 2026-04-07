@@ -1,8 +1,12 @@
 {
   "adversarial_risk_count": 40,
   "approval_pause_count": 10,
-  "avg_peak_memory_mb": 26.93359375,
-  "dirty_repo_policy_trigger_count": 20,
+  "avg_peak_memory_mb": 32.16015625,
+  "clean_nominal_run_count": 10,
+  "dirty_repo_policy_required_and_triggered_count": 30,
+  "dirty_repo_policy_trigger_count": 30,
+  "expected_failure_histogram": {},
+  "expected_partial_finalization_count": 10,
   "failure_histogram": {},
   "final_status_distribution": {
     "AWAITING_APPROVAL": 10,
@@ -11,14 +15,18 @@
     "HALTED": 40,
     "PARTIAL": 10
   },
-  "generated_at": "2026-04-07T06:57:23.608787Z",
+  "generated_at": "2026-04-07T18:13:35.552589Z",
   "isolation_activation_count": 40,
-  "max_runtime_s": 0.002036862999375444,
-  "mean_runtime_s": 0.0007866576248792019,
-  "median_runtime_s": 0.0007385015014733654,
-  "mutation_blocked_count": 10,
+  "isolation_required_and_triggered_count": 30,
+  "max_runtime_s": 0.0015769890014780685,
+  "mean_runtime_s": 0.0008455561081670264,
+  "median_runtime_s": 0.000829329997941386,
+  "mutation_blocked_count": 20,
+  "nominal_pass_rate": 1.0,
+  "override_assisted_run_count": 10,
   "partial_finalization_count": 10,
   "pass_rate": 1.0,
+  "protocol_pass_rate": 1.0,
   "quarantined_scenarios": {
     "preflight_fail": "expected infrastructure fail for policy coverage"
   },
@@ -40,7 +48,7 @@
     "0": 110,
     "1": 10
   },
-  "report_hash": "4c03a9afe44c30cb15fe588ca20f9b7f8185939e7e0e60860defc7f6fbd98bbc",
+  "report_hash": "6db4d2bb0735ea904cd62e9b75235bd12f03b1575017758e472098f9969e64ee",
   "rollback_occurrence_count": 0,
   "run_count": 120,
   "scenario_triage": {
@@ -58,5 +66,7 @@
     "simple_python_edit": "stable"
   },
   "suite_id": "release_candidate",
+  "unexpected_failure_histogram": {},
+  "unexpected_partial_finalization_count": 0,
   "unstable_scenarios": []
 }

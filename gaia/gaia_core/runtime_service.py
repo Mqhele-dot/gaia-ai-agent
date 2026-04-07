@@ -35,6 +35,7 @@ class RuntimeConfig:
     dirty_repo_policy: str = "block_on_dirty_repo"
     dirty_repo_override: bool = False
     untrusted_risk_block_threshold: int = 3
+    min_artifact_free_space_mb: int = 256
 
 
 @dataclass(frozen=True)
@@ -241,6 +242,11 @@ class TaskRuntimeService:
             raise RuntimeError("runtime_policy_violation")
         if self.model_policy.max_loaded_models > 1 and self.model_policy.force_single_active_reasoning_model:
             self._runtime_event("preflight", "model_policy_conflict", "", "runtime_policy_violation")
+            raise RuntimeError("runtime_policy_violation")
+        usage = shutil.disk_usage(self.repo_root)
+        free_mb = usage.free / (1024 * 1024)
+        if free_mb < float(self.runtime_config.min_artifact_free_space_mb):
+            self._runtime_event("preflight", "insufficient_artifact_disk_headroom", "", "runtime_policy_violation")
             raise RuntimeError("runtime_policy_violation")
         self._runtime_event("preflight", "ok", "", "")
 

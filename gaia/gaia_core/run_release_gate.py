@@ -49,7 +49,7 @@ def main(argv=None) -> int:
             if "rollback" in self.scenario.tags:
                 summary = "rollback completed due to verification failure"
             runtime_flags = {
-                "dirty_repo_policy_triggered": self.scenario.scenario_id.startswith("dirty_repo"),
+                "dirty_repo_policy_triggered": self.scenario.scenario_id.startswith("dirty_repo") or self.scenario.scenario_id == "preflight_fail",
                 "dirty_repo_override_used": self.scenario.scenario_id == "dirty_repo_override",
                 "selector_refinement_attempts": 1 if self.scenario.scenario_id == "refinement_exhausted" else 0,
                 "untrusted_content_risk_detected": "adversarial" in self.scenario.tags,
@@ -96,7 +96,11 @@ def main(argv=None) -> int:
         (repo_root / ".git").mkdir(exist_ok=True)
         engine = _ScenarioEngine(scenario)
         return TaskRuntimeService(
-            runtime_config=RuntimeConfig(repo_root=str(repo_root), dirty_repo_override=scenario.scenario_id == "dirty_repo_override"),
+            runtime_config=RuntimeConfig(
+                repo_root=str(repo_root),
+                dirty_repo_override=scenario.scenario_id == "dirty_repo_override",
+                min_artifact_free_space_mb=profile.min_artifact_free_space_mb,
+            ),
             model_policy=ModelRuntimePolicy(),
             planner=_Planner(),
             engine=engine,
@@ -116,6 +120,11 @@ def main(argv=None) -> int:
 
     print(f"readiness_verdict={release.overall_readiness_verdict}")
     print(f"blocking_issue_count={len(release.blocking_issues)}")
+    print(f"clean_nominal_pass_rate={release.clean_nominal_pass_rate:.4f}")
+    print(f"nominal_pass_rate={release.nominal_pass_rate:.4f}")
+    print(f"protocol_pass_rate={release.protocol_pass_rate:.4f}")
+    print(f"expected_partial_finalization_count={release.expected_partial_finalization_count}")
+    print(f"unexpected_partial_finalization_count={release.unexpected_partial_finalization_count}")
     print(f"aggregate_report_hash={report.report_hash}")
     print(f"telemetry_digest_hash={digest.digest_hash}")
     print(f"threshold_tuning_report_hash={tuning.report_hash}")

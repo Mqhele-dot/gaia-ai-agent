@@ -1,17 +1,19 @@
 {
-  "aggregate_report_hash": "4c03a9afe44c30cb15fe588ca20f9b7f8185939e7e0e60860defc7f6fbd98bbc",
-  "blocking_issues": [
-    "partial_finalization_rate_high"
-  ],
-  "overall_readiness_verdict": "needs hardening",
+  "aggregate_report_hash": "6db4d2bb0735ea904cd62e9b75235bd12f03b1575017758e472098f9969e64ee",
+  "blocking_issues": [],
+  "clean_nominal_pass_rate": 0.5,
+  "expected_failure_histogram": {},
+  "expected_partial_finalization_count": 10,
+  "nominal_pass_rate": 1.0,
+  "overall_readiness_verdict": "bounded-use ready",
   "override_flags": {
-    "dirty_repo_override_used": 20,
+    "dirty_repo_override_used": 10,
     "quarantine_present": 1,
     "relaxed_threshold_run": 0
   },
+  "protocol_pass_rate": 1.0,
   "recommended_next_actions": [
-    "investigate blocking issues",
-    "re-run release gate"
+    "keep monitoring burn-in telemetry"
   ],
   "score_by_dimension": {
     "approval_handling": 0.5,
@@ -22,6 +24,8 @@
     "rollback_reliability": 1.0,
     "runtime_stability": 1.0
   },
-  "summary_hash": "b10dc6bb5a01b3798ac870bf219a8aef85a943e36d831795b916bcc45c41dc1e",
-  "telemetry_digest_hash": "acaf00ff54bf8c5feb9dfdb8e9d9be246cca7f6511f8eacd448dc09f5b7bc83f"
+  "summary_hash": "e44231576f6105f4734e6a13e1d03517ecf529f881473834872398c19f38b186",
+  "telemetry_digest_hash": "393cac674a37f358a7098ce751706f0a4fd41fbffad5a4583d696ce73e0406b3",
+  "unexpected_failure_histogram": {},
+  "unexpected_partial_finalization_count": 0
 }

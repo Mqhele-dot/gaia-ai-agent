@@ -165,8 +165,9 @@ def test_telemetry_digest_is_deterministic() -> None:
         EvalRunResult("s", "r1", TaskStatus.COMPLETED, True, None, "tip", None, 1, 1, [], [], [], runtime_flags={}),
         EvalRunResult("s", "r2", TaskStatus.PARTIAL, False, None, "tip", None, 2, 2, [], [], [], runtime_flags={"dirty_repo_policy_triggered": True}),
     ]
-    one = harness.build_telemetry_digest(runs)
-    two = harness.build_telemetry_digest(runs)
+    report = harness.aggregate(runs, suite_id="x")
+    one = harness.build_telemetry_digest(runs, report)
+    two = harness.build_telemetry_digest(runs, report)
     assert one.digest_hash == two.digest_hash
 
 
@@ -199,3 +200,78 @@ def test_resolve_release_profile_uses_known_presets() -> None:
     profile = resolve_release_profile("local_8gb")
     assert profile.target_machine_label == "local_8gb"
     assert profile.max_allowed_peak_memory_mb == 8_192.0
+
+
+def test_adversarial_expected_halt_counts_as_pass() -> None:
+    harness = EvalHarness(lambda _: FakeService(status=TaskStatus.HALTED))
+    scenario = EvalScenario("adv", "t", "obj", "fixture", TaskStatus.HALTED, False, False, [], scenario_class="adversarial")
+    result = harness.run_scenario(scenario, EvalRunConfig(iterations=1))[0]
+    assert result.success
+
+
+def test_nominal_completed_missing_invariant_fails_validation() -> None:
+    scenario = EvalScenario("nominal", "t", "obj", "fixture", TaskStatus.COMPLETED, False, False, [], scenario_class="nominal")
+    verdict = EvalHarness.validate_scenario_run(
+        {"final_status": TaskStatus.COMPLETED, "witness_tip_hash": "", "commit_hash": "abc", "runtime_flags": {}, "invariant_violations": []},
+        scenario,
+    )
+    assert not verdict["scenario_passed"]
+    assert "missing_witness_tip" in verdict["invariant_failures"]
+
+
+def test_nominal_protocol_pass_rates_and_partial_split() -> None:
+    harness = EvalHarness(lambda _: FakeService())
+    scenarios = [
+        EvalScenario("n1", "n1", "obj", "f", TaskStatus.COMPLETED, False, False, [], scenario_class="nominal"),
+        EvalScenario("p1", "p1", "obj", "f", TaskStatus.PARTIAL, False, False, [], scenario_class="boundary"),
+    ]
+    runs = [
+        EvalRunResult("n1", "r1", TaskStatus.COMPLETED, True, "abc", "tip", None, 1, 1, [], [], []),
+        EvalRunResult("p1", "r2", TaskStatus.PARTIAL, True, "abc", "tip", None, 1, 1, [], [], []),
+    ]
+    report = harness.aggregate(runs, suite_id="x", scenarios=scenarios)
+    assert report.nominal_pass_rate == 1.0
+    assert report.protocol_pass_rate == 1.0
+    assert report.expected_partial_finalization_count == 1
+    assert report.unexpected_partial_finalization_count == 0
+
+
+def test_quarantine_visibility_without_nominal_distortion() -> None:
+    harness = EvalHarness(lambda _: FakeService())
+    scenarios = [
+        EvalScenario("simple", "t", "obj", "f", TaskStatus.COMPLETED, False, False, [], scenario_class="nominal"),
+        EvalScenario("preflight_fail", "t", "obj", "f", TaskStatus.HALTED, False, False, [], scenario_class="infrastructure"),
+    ]
+    runs = [
+        EvalRunResult("simple", "r1", TaskStatus.COMPLETED, True, "abc", "tip", None, 1, 1, [], [], []),
+        EvalRunResult("preflight_fail", "r2", TaskStatus.HALTED, True, None, "tip", "s1", 1, 1, [], [], []),
+    ]
+    report = harness.aggregate(runs, suite_id="x", scenarios=scenarios)
+    assert report.nominal_pass_rate == 1.0
+    assert report.scenario_triage["preflight_fail"] == "quarantined"
+
+
+def test_release_summary_tracks_override_assisted_runs_not_clean() -> None:
+    harness = EvalHarness(lambda _: FakeService())
+    scenarios = [EvalScenario("dirty_repo_override", "t", "obj", "f", TaskStatus.COMPLETED, False, False, [], scenario_class="nominal")]
+    runs = [
+        EvalRunResult(
+            "dirty_repo_override",
+            "r1",
+            TaskStatus.COMPLETED,
+            True,
+            "abc",
+            "tip",
+            None,
+            1,
+            1,
+            [],
+            [],
+            [],
+            runtime_flags={"dirty_repo_override_used": True, "dirty_repo_policy_triggered": True},
+        )
+    ]
+    report = harness.aggregate(runs, suite_id="x", scenarios=scenarios)
+    digest = harness.build_telemetry_digest(runs, report)
+    summary = harness.build_release_summary(report, digest, ReleaseReadinessProfile())
+    assert summary.clean_nominal_pass_rate == 0.0

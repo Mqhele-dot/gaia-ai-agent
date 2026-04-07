@@ -362,6 +362,23 @@ Use `memory_profile_notes()` for built-in operator defaults:
 
 ## Machine profile concept
 - Profile fields include pass-rate, invariant, runtime, memory, partial-finalization, dirty-policy, and refinement thresholds.
+- Scenario definitions are explicit and include:
+  - `expected_final_status`
+  - `scenario_class` (`nominal`, `adversarial`, `boundary`, `infrastructure`)
+  - `require_witness_integrity`
+  - `require_isolation_activation`
+  - `require_policy_trigger`
+- Scenario validation is context-aware:
+  - expected `HALTED`/`FAILED`/`PARTIAL`/`AWAITING_APPROVAL` outcomes can be protocol passes when required behavior is containment/halt/report.
+  - nominal scenarios remain completion-oriented and release-blocking on unexpected failures.
+- Readiness is dual-track:
+  - **Operational Reliability Track**: nominal pass rate (`nominal_pass_rate`, `clean_nominal_pass_rate`)
+  - **Protocol Robustness Track**: adversarial/boundary/infrastructure pass rate (`protocol_pass_rate`)
+- Partial finalization is split:
+  - `expected_partial_finalization_count` (informational protocol coverage)
+  - `unexpected_partial_finalization_count` (release-blocking when above threshold)
+- Telemetry and summaries include expected vs unexpected failure histograms and policy/isolation requirement coverage counters.
+- Runtime preflight includes deterministic disk headroom validation (`min_artifact_free_space_mb`) before execution.
 - Profiles are deterministic and explicit; no hidden auto-tuning.
 
 ## Retention policy model

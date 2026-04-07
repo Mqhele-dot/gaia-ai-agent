@@ -133,6 +133,25 @@ def test_policy_violation_halts_with_runtime_policy_violation(tmp_path: Path) ->
         assert "runtime_policy_violation" in str(exc)
 
 
+def test_disk_headroom_preflight_blocks_when_below_threshold(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / ".git").mkdir(parents=True, exist_ok=True)
+    engine = FakeEngine([TaskStatus.COMPLETED])
+    service = TaskRuntimeService(
+        runtime_config=RuntimeConfig(repo_root=str(tmp_path), min_artifact_free_space_mb=999_999),
+        model_policy=ModelRuntimePolicy(),
+        planner=FakePlanner(),
+        engine=engine,
+    )
+    import shutil as _shutil
+
+    monkeypatch.setattr(_shutil, "disk_usage", lambda _path: _shutil._ntuple_diskusage(total=100, used=99, free=1))  # type: ignore[attr-defined]
+    try:
+        service.execute_one_task("objective")
+        assert False, "expected runtime policy violation due to disk headroom"
+    except RuntimeError as exc:
+        assert "runtime_policy_violation" in str(exc)
+
+
 def test_model_lifecycle_events_logged(tmp_path: Path) -> None:
     service, engine = _service(tmp_path, [TaskStatus.COMPLETED])
     service.execute_one_task("objective")

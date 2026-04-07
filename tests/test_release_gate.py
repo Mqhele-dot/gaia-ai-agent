@@ -15,28 +15,38 @@ def test_release_gate_nonzero_on_blocking_failures(monkeypatch, tmp_path) -> Non
                 generated_at="2026-01-01T00:00:00Z",
                 run_count=1,
                 pass_rate=0.0,
+                nominal_pass_rate=0.0,
+                protocol_pass_rate=0.0,
                 mean_runtime_s=1.0,
                 median_runtime_s=1.0,
                 max_runtime_s=1.0,
                 avg_peak_memory_mb=1.0,
                 failure_histogram={"x": 1},
+                unexpected_failure_histogram={"x": 1},
+                expected_failure_histogram={},
                 final_status_distribution={},
                 rollback_occurrence_count=0,
                 approval_pause_count=0,
                 partial_finalization_count=0,
+                expected_partial_finalization_count=0,
+                unexpected_partial_finalization_count=0,
                 adversarial_risk_count=0,
                 refinement_attempt_distribution={},
                 dirty_repo_policy_trigger_count=0,
                 mutation_blocked_count=0,
                 isolation_activation_count=0,
+                isolation_required_and_triggered_count=0,
+                dirty_repo_policy_required_and_triggered_count=0,
+                clean_nominal_run_count=0,
+                override_assisted_run_count=0,
                 unstable_scenarios=[],
                 recommendation="not_ready",
                 readiness_score={},
                 report_hash="rhash",
             )
             tuning = ThresholdTuningReport("local_16gb", {}, {}, [], 0.0, 0.0, 0.0, 0.0, 0.0, "thash")
-            digest = TelemetryDigest(1.0, 1.0, 1.0, [1.0, 1.0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "dhash")
-            release = ReleaseSummary("needs hardening", {}, ["x"], ["fix"], "rhash", "dhash", {}, "shash")
+            digest = TelemetryDigest(1.0, 1.0, 1.0, [1.0, 1.0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, {}, {}, 0, 0, "dhash")
+            release = ReleaseSummary("needs hardening", {}, ["x"], ["fix"], "rhash", "dhash", {}, 0.0, 0.0, 0, 0, {}, {"x": 1}, 0.0, "shash")
             return report, tuning, digest, release
 
     monkeypatch.setattr(run_release_gate, "EvalHarness", FakeHarness)
