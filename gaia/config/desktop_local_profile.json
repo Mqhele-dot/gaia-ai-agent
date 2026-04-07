@@ -1,0 +1,31 @@
+{
+  "profile_name": "desktop_local_5h",
+  "repo_root": "/workspace/gaia-ai-agent",
+  "artifact_storage_path": "/workspace/gaia-ai-agent/gaia/data/witness/artifacts",
+  "witness_path": "/workspace/gaia-ai-agent/gaia/data/witness",
+  "min_artifact_free_space_mb": 2048,
+  "strict_mode_default": false,
+  "approval_required_default": true,
+  "retention_policy": "keep_release_campaigns_only",
+  "model_runtime_policy": {
+    "max_loaded_models": 1,
+    "force_single_active_reasoning_model": true,
+    "unload_model_during_verification": true
+  },
+  "campaign_defaults": {
+    "target_duration_hours": 5,
+    "max_tasks_per_campaign": 200,
+    "checkpoint_interval_tasks": 2,
+    "smoke_test_interval_tasks": 2,
+    "full_test_interval_tasks": 10,
+    "max_consecutive_failures": 5,
+    "max_selector_ambiguity_events": 12,
+    "max_partial_finalizations": 10,
+    "max_disk_pressure_events": 2
+  },
+  "required_tools": [
+    "git",
+    "python",
+    "pytest"
+  ]
+}

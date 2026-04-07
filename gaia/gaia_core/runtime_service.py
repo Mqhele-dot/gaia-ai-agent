@@ -131,7 +131,11 @@ class TaskRuntimeService:
         self.model_lifecycle = ModelLifecycleController(model_policy, event_sink=self._runtime_event)
         self.engine.model_lifecycle = self.model_lifecycle
         if hasattr(self.engine, "policy"):
-            self.engine.policy.risk_block_threshold = runtime_config.untrusted_risk_block_threshold
+            try:
+                self.engine.policy.risk_block_threshold = runtime_config.untrusted_risk_block_threshold
+            except Exception:
+                # Keep immutable policy objects intact; runtime will use engine defaults.
+                pass
         self._snapshot_dir = self.repo_root / "gaia" / "data" / "runtime_sessions"
         self._snapshot_dir.mkdir(parents=True, exist_ok=True)
 

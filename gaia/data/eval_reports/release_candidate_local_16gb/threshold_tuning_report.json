@@ -1,17 +1,17 @@
 {
   "adversarial_risk_trigger_frequency": 0.3333333333333333,
   "dirty_repo_policy_trigger_frequency": 0.25,
-  "memory_headroom_mb": 16345.671875,
+  "memory_headroom_mb": 16340.80078125,
   "profile_name": "local_16gb",
-  "report_hash": "ea638a0f67e5f2964518e6256a1af7620cbd80b838aaa46d1fb1b7a1e8887c12",
-  "runtime_headroom_s": 29.998987385850054,
+  "report_hash": "8e50f561f36c4cdbd23316698eb51ee8fa539a5c872bac8ed50b1a8d8add237f",
+  "runtime_headroom_s": 29.999317164000022,
   "selector_refinement_pressure": 0.9166666666666666,
   "threshold_margins": {
-    "mean_runtime_margin_s": 29.998987385850054,
+    "mean_runtime_margin_s": 29.999317164000022,
     "nominal_pass_rate_margin": 0.050000000000000044,
     "partial_finalization_margin": 0.05,
     "pass_rate_margin": 0.050000000000000044,
-    "peak_memory_margin_mb": 16345.671875,
+    "peak_memory_margin_mb": 16340.80078125,
     "protocol_pass_rate_margin": 0.09999999999999998
   },
   "top_failure_classes": {},

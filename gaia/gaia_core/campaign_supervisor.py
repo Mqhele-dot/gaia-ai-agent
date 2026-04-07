@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .distrustful_agent import TaskStatus, _utc_now, sha256_bytes
+from .desktop_profile import ensure_profile_paths, load_desktop_profile, validate_desktop_preflight
 from .runtime_service import TaskRuntimeService, execute_task_api
 
 
@@ -233,9 +234,9 @@ class CampaignSupervisor:
                 state.last_checkpoint_hash = self._checkpoint(campaign_dir, request, plan, state, telemetry, completed_refs, witness_tip)
                 return self._finalize_result(state, telemetry, commits, witness_tip, campaign_dir, "PAUSED")
 
-            if telemetry.tasks_completed % max(1, plan.test_schedule.get("smoke_interval", self.policy.smoke_test_interval_tasks)) == 0:
+            if telemetry.tasks_completed > 0 and telemetry.tasks_completed % max(1, plan.test_schedule.get("smoke_interval", self.policy.smoke_test_interval_tasks)) == 0:
                 self._run_scheduled_test("smoke", request.strict_mode, telemetry)
-            if telemetry.tasks_completed % max(1, plan.test_schedule.get("full_interval", self.policy.full_test_interval_tasks)) == 0:
+            if telemetry.tasks_completed > 0 and telemetry.tasks_completed % max(1, plan.test_schedule.get("full_interval", self.policy.full_test_interval_tasks)) == 0:
                 self._run_scheduled_test("full", True, telemetry)
 
             if telemetry.tasks_completed and telemetry.tasks_completed % max(1, self.policy.checkpoint_interval_tasks) == 0:
@@ -249,7 +250,11 @@ class CampaignSupervisor:
             self._sample_growth(telemetry)
 
         if state.current_phase != "halted":
-            state.current_phase = "completed"
+            if telemetry.tasks_completed == 0 and telemetry.failed_tasks > 0:
+                state.current_phase = "halted"
+                state.campaign_flags["halt_reason"] = "backlog_exhausted_without_progress"
+            else:
+                state.current_phase = "completed"
         state.last_checkpoint_hash = self._checkpoint(campaign_dir, request, plan, state, telemetry, completed_refs, witness_tip)
         return self._finalize_result(state, telemetry, commits, witness_tip, campaign_dir, "COMPLETED" if state.current_phase == "completed" else "HALTED")
 
@@ -423,6 +428,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--hours", type=float, default=5.0)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--approval-required", action="store_true")
+    parser.add_argument("--profile-path", default="gaia/config/desktop_local_profile.json")
     args = parser.parse_args(argv)
 
     from .runtime_service import ModelRuntimePolicy, RuntimeConfig
@@ -441,6 +447,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     repo_root = Path(args.repo)
+    profile = load_desktop_profile(args.profile_path)
+    ensure_profile_paths(profile)
+    preflight = validate_desktop_preflight(profile)
+    print(f"profile_name={profile.profile_name}")
+    print(f"profile_path={args.profile_path}")
+    print(f"preflight_ok={all(bool(v) for k, v in preflight.items() if k.endswith('_ok') or k.endswith('_ready') or k in {'repo_exists', 'repo_writable', 'git_dir_exists', 'campaign_policy_sane'})}")
+    print(f"artifact_path={profile.artifact_storage_path}")
+    print(f"witness_path={profile.witness_path}")
+    if not preflight["disk_headroom_ok"] or not preflight["all_tools_ok"] or not preflight["campaign_policy_sane"]:
+        print("campaign_preflight_failed")
+        return 2
+
     ledger = WitnessLedger(repo_root)
     tool_runner = ToolWitnessRunner(ledger, model_fingerprint="campaign-supervisor")
     verification = VerificationRunner(tool_runner, RetryManager(entropy_cap=8))
@@ -458,17 +476,33 @@ def main(argv: Optional[List[str]] = None) -> int:
         intent_provider=_unsupported_intent_provider,
     )
     service = _Service(
-        runtime_config=RuntimeConfig(repo_root=str(repo_root), strict_mode_default=args.strict),
+        runtime_config=RuntimeConfig(
+            repo_root=str(repo_root),
+            strict_mode_default=args.strict or profile.strict_mode_default,
+            approval_required_default=args.approval_required or profile.approval_required_default,
+            artifact_retention_policy=profile.retention_policy,
+            min_artifact_free_space_mb=profile.min_artifact_free_space_mb,
+        ),
         model_policy=ModelRuntimePolicy(),
         planner=BoundedPlanner(max_steps=7),
         engine=engine,
     )
-    supervisor = CampaignSupervisor(service)
+    campaign_policy = CampaignPolicy(
+        max_tasks_per_campaign=int(profile.campaign_defaults.get("max_tasks_per_campaign", 200)),
+        checkpoint_interval_tasks=int(profile.campaign_defaults.get("checkpoint_interval_tasks", 2)),
+        smoke_test_interval_tasks=int(profile.campaign_defaults.get("smoke_test_interval_tasks", 2)),
+        full_test_interval_tasks=int(profile.campaign_defaults.get("full_test_interval_tasks", 10)),
+        max_consecutive_failures=int(profile.campaign_defaults.get("max_consecutive_failures", 5)),
+        max_selector_ambiguity_events=int(profile.campaign_defaults.get("max_selector_ambiguity_events", 12)),
+        max_partial_finalizations=int(profile.campaign_defaults.get("max_partial_finalizations", 10)),
+        max_disk_pressure_events=int(profile.campaign_defaults.get("max_disk_pressure_events", 2)),
+    )
+    supervisor = CampaignSupervisor(service, campaign_policy)
     out = execute_campaign_api(
         supervisor,
         args.objective,
         repo_root=str(repo_root),
-        hours=args.hours,
+        hours=float(profile.campaign_defaults.get("target_duration_hours", args.hours)),
         strict=args.strict,
         approval_required=args.approval_required,
     )

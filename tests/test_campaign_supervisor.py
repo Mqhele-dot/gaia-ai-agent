@@ -103,6 +103,16 @@ def test_campaign_halts_on_consecutive_failures(tmp_path: Path) -> None:
     assert result.final_status == "HALTED"
 
 
+def test_campaign_halts_when_backlog_exhausted_without_progress(tmp_path: Path) -> None:
+    service = FakeService(tmp_path, [TaskStatus.HALTED, TaskStatus.HALTED, TaskStatus.HALTED])
+    sup = CampaignSupervisor(
+        service,
+        CampaignPolicy(max_consecutive_failures=99, max_replans=0, smoke_test_interval_tasks=999, full_test_interval_tasks=999),
+    )
+    result = sup.run_campaign(_request(tmp_path))
+    assert result.final_status == "HALTED"
+
+
 def test_campaign_pause_on_approval_boundary(tmp_path: Path) -> None:
     service = FakeService(tmp_path, [TaskStatus.AWAITING_APPROVAL])
     sup = CampaignSupervisor(service, CampaignPolicy())

@@ -200,3 +200,24 @@ def test_operator_summary_uses_deterministic_result_fields(tmp_path: Path) -> No
     assert summary["final_status"] == TaskStatus.PARTIAL
     assert "result_bundle_hash" in summary
     assert "runtime_flags" in summary
+
+
+def test_runtime_service_tolerates_immutable_engine_policy(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir(parents=True, exist_ok=True)
+
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class FrozenPolicy:
+        risk_block_threshold: int = 1
+
+    engine = FakeEngine([TaskStatus.COMPLETED])
+    engine.policy = FrozenPolicy()
+    service = TaskRuntimeService(
+        runtime_config=RuntimeConfig(repo_root=str(tmp_path)),
+        model_policy=ModelRuntimePolicy(),
+        planner=FakePlanner(),
+        engine=engine,
+    )
+    out = service.execute_one_task("objective")
+    assert out["result"].final_status == TaskStatus.COMPLETED
