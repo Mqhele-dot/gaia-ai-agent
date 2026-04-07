@@ -1,0 +1,18 @@
+{
+  "approval_pause_frequency": 0.08333333333333333,
+  "artifact_growth_per_task": 2.0,
+  "digest_hash": "acaf00ff54bf8c5feb9dfdb8e9d9be246cca7f6511f8eacd448dc09f5b7bc83f",
+  "dirty_repo_block_override_frequency": 0.16666666666666666,
+  "max_runtime_s": 0.0008862329996190965,
+  "mean_runtime_s": 0.0007704504993550169,
+  "median_runtime_s": 0.0007495009995182045,
+  "partial_finalization_frequency": 0.08333333333333333,
+  "peak_memory_range_mb": [
+    26.93359375,
+    26.93359375
+  ],
+  "rollback_frequency": 0.0,
+  "selector_refinement_frequency": 0.08333333333333333,
+  "untrusted_risk_block_frequency": 0.3333333333333333,
+  "witness_record_growth_rate": 0.0
+}

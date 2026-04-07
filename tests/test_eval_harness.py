@@ -11,6 +11,7 @@ from gaia.gaia_core.eval_harness import (
     EvalScenario,
     FailureInjectionConfig,
     ReleaseReadinessProfile,
+    resolve_release_profile,
 )
 
 
@@ -185,3 +186,16 @@ def test_retention_policy_never_deletes_witness(tmp_path) -> None:
     removed = mgr.apply(tmp_path, "keep_last_n_runs", keep_last_n=1)
     assert "witness.jsonl" not in removed
     assert (tmp_path / "witness.jsonl").exists()
+
+
+def test_expected_halted_outcome_is_not_marked_unstable() -> None:
+    harness = EvalHarness(lambda _: FakeService(status=TaskStatus.HALTED))
+    runs = [EvalRunResult("s", "r1", TaskStatus.HALTED, True, None, "tip", "s1", 1, 1, [], [], [])]
+    report = harness.aggregate(runs, suite_id="x")
+    assert report.unstable_scenarios == []
+
+
+def test_resolve_release_profile_uses_known_presets() -> None:
+    profile = resolve_release_profile("local_8gb")
+    assert profile.target_machine_label == "local_8gb"
+    assert profile.max_allowed_peak_memory_mb == 8_192.0

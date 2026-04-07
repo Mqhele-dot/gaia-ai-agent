@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     import resource
@@ -259,7 +259,7 @@ class EvalHarness:
                 for violation in item.invariant_violations:
                     failure_histogram[violation] = failure_histogram.get(violation, 0) + 1
                 unstable.add(item.scenario_id)
-            if item.final_status != TaskStatus.COMPLETED:
+            if not item.success:
                 unstable.add(item.scenario_id)
             if "rollback" in " ".join(item.notes).lower():
                 rollback_count += 1
@@ -512,6 +512,30 @@ class EvalHarness:
         digest = self.build_telemetry_digest(runs)
         release_summary = self.build_release_summary(report, digest, profile)
         return report, tuning, digest, release_summary
+
+
+def resolve_release_profile(profile_name: str) -> ReleaseReadinessProfile:
+    presets: Dict[str, ReleaseReadinessProfile] = {
+        "local_8gb": ReleaseReadinessProfile(
+            target_machine_label="local_8gb",
+            max_allowed_peak_memory_mb=8_192.0,
+            max_allowed_mean_runtime_s=35.0,
+            required_pass_rate=0.95,
+        ),
+        "local_16gb": ReleaseReadinessProfile(
+            target_machine_label="local_16gb",
+            max_allowed_peak_memory_mb=16_384.0,
+            max_allowed_mean_runtime_s=30.0,
+            required_pass_rate=0.95,
+        ),
+        "local_32gb": ReleaseReadinessProfile(
+            target_machine_label="local_32gb",
+            max_allowed_peak_memory_mb=32_768.0,
+            max_allowed_mean_runtime_s=25.0,
+            required_pass_rate=0.97,
+        ),
+    }
+    return presets.get(profile_name, ReleaseReadinessProfile(target_machine_label=profile_name))
 
 
 def basic_scenarios() -> List[EvalScenario]:
