@@ -196,3 +196,65 @@ Use `memory_profile_notes()` for built-in operator defaults:
   - rollback helpers
   - `finalize_commit` / `attach_git_note` / `verify_finalization`
 - This keeps one-task, one-edit, one-commit reliability as primary objective.
+
+## Runtime service architecture
+- `TaskRuntimeService` wraps `TaskExecutionEngine` for operational use.
+- Runtime objects:
+  - `RuntimeConfig`
+  - `ModelRuntimePolicy`
+  - `ExecutionSession`
+  - `SessionStateSnapshot`
+- Runtime responsibilities:
+  - preflight checks
+  - session lock acquisition/release
+  - lifecycle-aware execution
+  - result bundle materialization
+  - operator summary generation
+
+## Model lifecycle policy
+- `ModelLifecycleController` enforces memory discipline:
+  - `enter_reasoning_window(...)`
+  - `exit_reasoning_window(...)`
+  - `mark_model_unloaded(...)`
+  - `current_model_state(...)`
+- Runtime logs lifecycle transitions as witnessed events.
+- Policy defaults force single active reasoning model and allow model-cold verification windows.
+
+## CLI/API entrypoints
+- Python API: `execute_task_api(service, objective, strict, approval_token)`
+- CLI: `python -m gaia.gaia_core.run_task --objective \"...\" --repo <path> [--strict] [--approval-token ...]`
+- CLI output fields:
+  - `task_id`
+  - `final_status`
+  - `commit_hash`
+  - `witness_tip_hash`
+  - `failed_step`
+- CLI exits non-zero for `FAILED` or `HALTED`.
+
+## Session checkpointing and resume flow
+- Session snapshots are stored as deterministic JSON artifacts (`.session.json`) and persisted under runtime session storage.
+- Resume is explicit via `resume_with_approval(session_id, approval_token)`.
+- Resume rebuilds a bounded plan of remaining steps and does not silently replay already completed steps.
+
+## Preflight checks and queue/lock behavior
+- Deterministic preflight checks validate:
+  - git repo presence
+  - writable repo access
+  - runtime policy consistency
+  - model policy consistency
+- Lock discipline:
+  - uses `.gaia_task.lock` to block conflicting mutation sessions
+  - logs lock acquire/release/conflict events
+  - fails safely on conflict (no silent parallel mutation)
+
+## Result bundle and operator summary
+- Runtime materializes a deterministic result bundle artifact (`.result_bundle.json`) containing request, normalized plan, execution result, summary, artifact refs, and failure classification.
+- Operator summary is built from deterministic runtime/result fields only:
+  - objective
+  - final status
+  - completed step count
+  - failed step
+  - rollback/finalization flags
+  - commit hash
+  - witness tip hash
+  - result bundle hash

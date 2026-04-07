@@ -1126,6 +1126,7 @@ class TaskExecutionEngine:
         policy: TaskPolicyLimits = TaskPolicyLimits(),
         intent_provider: Optional[Any] = None,
         refinement_provider: Optional[Any] = None,
+        model_lifecycle: Optional[Any] = None,
     ) -> None:
         self.planner = planner
         self.diff_emitter = diff_emitter
@@ -1136,6 +1137,7 @@ class TaskExecutionEngine:
         self.policy = policy
         self.intent_provider = intent_provider
         self.refinement_provider = refinement_provider
+        self.model_lifecycle = model_lifecycle
 
     def execute(
         self,
@@ -1165,6 +1167,11 @@ class TaskExecutionEngine:
                 break
 
             status = TaskStatus.RUNNING
+            if self.model_lifecycle:
+                if step.step_type in {"plan_edit"}:
+                    self.model_lifecycle.enter_reasoning_window("primary_reasoning_model")
+                elif step.step_type in {"apply_edit", "run_verification", "finalize_change"}:
+                    self.model_lifecycle.exit_reasoning_window("primary_reasoning_model")
             self._task_event("task_step_started", request.task_id, step.step_id, "start")
             try:
                 if step.step_type == "inspect_repo":
