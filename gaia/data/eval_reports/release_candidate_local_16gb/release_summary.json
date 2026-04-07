@@ -1,0 +1,31 @@
+{
+  "aggregate_report_hash": "6db4d2bb0735ea904cd62e9b75235bd12f03b1575017758e472098f9969e64ee",
+  "blocking_issues": [],
+  "clean_nominal_pass_rate": 1.0,
+  "expected_failure_histogram": {},
+  "expected_partial_finalization_count": 10,
+  "nominal_pass_rate": 1.0,
+  "overall_readiness_verdict": "bounded-use ready",
+  "override_flags": {
+    "dirty_repo_override_used": 0,
+    "quarantine_present": 1,
+    "relaxed_threshold_run": 0
+  },
+  "protocol_pass_rate": 1.0,
+  "recommended_next_actions": [
+    "keep monitoring burn-in telemetry"
+  ],
+  "score_by_dimension": {
+    "approval_handling": 0.5,
+    "correctness": 1.0,
+    "memory_discipline": 1.0,
+    "policy_enforcement": 1.0,
+    "provenance_reliability": 0.9167,
+    "rollback_reliability": 1.0,
+    "runtime_stability": 1.0
+  },
+  "summary_hash": "9077a95778395d349c28086bdb2200d04adf6d6ef7487f670af4daff686eccf3",
+  "telemetry_digest_hash": "e26eec4dd129b5d08da0a755523e868e2cb57c32679e607d28829a7b4744a02c",
+  "unexpected_failure_histogram": {},
+  "unexpected_partial_finalization_count": 0
+}

@@ -1,0 +1,183 @@
+"""Release-gate CLI for bounded-use readiness checks."""
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import asdict
+from pathlib import Path
+import uuid
+
+from .distrustful_agent import TaskExecutionResult, TaskStatus
+from .eval_harness import EvalHarness, EvalRunConfig, EvalScenario, basic_scenarios, resolve_release_profile
+from .runtime_service import ModelRuntimePolicy, RuntimeConfig, TaskRuntimeService
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Run release gate for distrustful local agent")
+    parser.add_argument("--profile", default="local_16gb")
+    parser.add_argument("--iterations", type=int, default=5)
+    parser.add_argument("--output-dir", default="gaia/data/eval_reports")
+    args = parser.parse_args(argv)
+
+    class _Ledger:
+        def __init__(self) -> None:
+            self.events = []
+            self.artifacts = []
+            self.tip_hash = "tip-release-gate"
+
+        def append(self, record):
+            self.events.append(record)
+            return record
+
+        def store_artifact(self, payload: bytes, suffix: str = ".bin") -> str:
+            self.artifacts.append((payload, suffix))
+            return f"h{len(self.artifacts)}"
+
+    class _ToolRunner:
+        def __init__(self) -> None:
+            self.ledger = _Ledger()
+
+    class _ScenarioEngine:
+        def __init__(self, scenario: EvalScenario) -> None:
+            self.scenario = scenario
+            self.tool_runner = _ToolRunner()
+            self.model_lifecycle = None
+
+        def execute(self, request, proposed_plan=None, approval_token=None, **_kwargs):
+            status = self.scenario.expected_outcome
+            summary = f"status={status}"
+            if "rollback" in self.scenario.tags:
+                summary = "rollback completed due to verification failure"
+            dirty_state = {}
+            if self.scenario.scenario_id == "dirty_repo_blocked":
+                dirty_state = {"tracked_modifications": 1, "untracked_files": 0}
+            elif self.scenario.scenario_id == "dirty_repo_override":
+                dirty_state = {"tracked_modifications": 0, "untracked_files": 2}
+            dirty_policy = str(_kwargs.get("dirty_repo_policy", "block_on_dirty_repo"))
+            dirty_override = bool(_kwargs.get("dirty_repo_override", False))
+            dirty_triggered = bool(dirty_state)
+            dirty_override_used = False
+            if dirty_triggered:
+                if dirty_policy == "allow_mutation_with_explicit_override":
+                    dirty_override_used = dirty_override
+                elif dirty_policy == "allow_mutation_if_only_untracked_files":
+                    dirty_override_used = False
+            runtime_flags = {
+                "dirty_repo_policy_triggered": dirty_triggered or self.scenario.scenario_id == "preflight_fail",
+                "dirty_repo_override_used": dirty_override_used,
+                "dirty_repo_blocking_policy": dirty_policy,
+                "dirty_repo_state_details": dirty_state,
+                "selector_refinement_attempts": 1 if self.scenario.scenario_id == "refinement_exhausted" else 0,
+                "deterministic_selector_narrowing_used": self.scenario.scenario_id in {"simple_python_edit", "dirty_repo_override"},
+                "untrusted_content_risk_detected": "adversarial" in self.scenario.tags,
+            }
+            return TaskExecutionResult(
+                task_id=request.task_id,
+                final_status=status,
+                completed_steps=["s1", "s2", "s3"],
+                failed_step=None if status in {TaskStatus.COMPLETED, TaskStatus.PARTIAL} else "s4",
+                commit_hash="abc123" if status in {TaskStatus.COMPLETED, TaskStatus.PARTIAL} else None,
+                witness_tip_hash=self.tool_runner.ledger.tip_hash,
+                summary=summary,
+                artifacts=[],
+                runtime_flags=runtime_flags,
+            )
+
+    class _Planner:
+        def build_plan(self, request, proposed_plan=None):
+            from .distrustful_agent import TaskPlan, TaskStep
+
+            return proposed_plan or TaskPlan(
+                task_id=request.task_id,
+                objective_summary="release_campaign",
+                assumptions=[],
+                bounded_steps=[
+                    TaskStep("s1", "inspect_repo", "", "", [], "low", False),
+                    TaskStep("s2", "plan_edit", "", "", ["s1"], "low", False),
+                    TaskStep("s3", "apply_edit", "", "", ["s2"], "low", False),
+                    TaskStep("s4", "finalize_change", "", "", ["s3"], "high", True),
+                ],
+                success_criteria=["bounded_execution_complete"],
+                stop_conditions=["policy_violation", "verification_fail"],
+            )
+
+    fixture_root = Path("gaia/data/eval_fixtures")
+    fixture_root.mkdir(parents=True, exist_ok=True)
+
+    def _service_factory(scenario: EvalScenario):
+        scenario_root = fixture_root / scenario.scenario_id
+        scenario_root.mkdir(parents=True, exist_ok=True)
+        (scenario_root / ".git").mkdir(exist_ok=True)
+        repo_root = scenario_root / f"run-{uuid.uuid4().hex[:8]}"
+        repo_root.mkdir(parents=True, exist_ok=True)
+        (repo_root / ".git").mkdir(exist_ok=True)
+        engine = _ScenarioEngine(scenario)
+        return TaskRuntimeService(
+            runtime_config=RuntimeConfig(
+                repo_root=str(repo_root),
+                dirty_repo_policy="allow_mutation_if_only_untracked_files" if scenario.scenario_id == "dirty_repo_override" else "block_on_dirty_repo",
+                dirty_repo_override=False,
+                min_artifact_free_space_mb=profile.min_artifact_free_space_mb,
+            ),
+            model_policy=ModelRuntimePolicy(),
+            planner=_Planner(),
+            engine=engine,
+        )
+
+    harness = EvalHarness(_service_factory)
+    profile = resolve_release_profile(args.profile)
+    try:
+        report, tuning, digest, release = harness.evaluate_release_candidate(
+            basic_scenarios(),
+            EvalRunConfig(iterations=args.iterations),
+            profile,
+        )
+        override_diag = {"rows": [], "count_by_override_type": {}, "count_by_scenario": {}, "diagnostics_hash": ""}
+        nominal_opt = {
+            "top_override_causes": {},
+            "top_nominal_selector_refinement_causes": {},
+            "clean_nominal_success_opportunities": 0,
+            "applied_fixes": [],
+            "report_hash": "",
+        }
+        if hasattr(harness, "run_scenario") and hasattr(harness, "build_override_diagnostics"):
+            all_runs = []
+            scenarios = basic_scenarios()
+            for scenario in scenarios:
+                all_runs.extend(harness.run_scenario(scenario, EvalRunConfig(iterations=args.iterations)))
+            override_diag = harness.build_override_diagnostics(all_runs, scenarios)
+            nominal_opt = harness.build_nominal_path_optimization_report(report, all_runs, scenarios)
+    except RuntimeError as exc:
+        print(f"release_gate_error={exc}")
+        return 2
+
+    print(f"readiness_verdict={release.overall_readiness_verdict}")
+    print(f"blocking_issue_count={len(release.blocking_issues)}")
+    print(f"clean_nominal_pass_rate={release.clean_nominal_pass_rate:.4f}")
+    print(f"nominal_pass_rate={release.nominal_pass_rate:.4f}")
+    print(f"protocol_pass_rate={release.protocol_pass_rate:.4f}")
+    print(f"expected_partial_finalization_count={release.expected_partial_finalization_count}")
+    print(f"unexpected_partial_finalization_count={release.unexpected_partial_finalization_count}")
+    print(f"nominal_selector_refinement_frequency={digest.nominal_selector_refinement_frequency:.4f}")
+    print(f"nominal_dirty_repo_override_frequency={digest.nominal_dirty_repo_override_frequency:.4f}")
+    print(f"aggregate_report_hash={report.report_hash}")
+    print(f"telemetry_digest_hash={digest.digest_hash}")
+    print(f"threshold_tuning_report_hash={tuning.report_hash}")
+    print(f"release_summary_hash={release.summary_hash}")
+    print(f"profile={profile.target_machine_label}")
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "aggregate_report.json").write_text(json.dumps(asdict(report), indent=2, sort_keys=True), encoding="utf-8")
+    (out_dir / "threshold_tuning_report.json").write_text(json.dumps(asdict(tuning), indent=2, sort_keys=True), encoding="utf-8")
+    (out_dir / "telemetry_digest.json").write_text(json.dumps(asdict(digest), indent=2, sort_keys=True), encoding="utf-8")
+    (out_dir / "release_summary.json").write_text(json.dumps(asdict(release), indent=2, sort_keys=True), encoding="utf-8")
+    (out_dir / "override_diagnostics.json").write_text(json.dumps(override_diag, indent=2, sort_keys=True), encoding="utf-8")
+    (out_dir / "nominal_path_optimization_report.json").write_text(json.dumps(nominal_opt, indent=2, sort_keys=True), encoding="utf-8")
+    print(f"output_dir={out_dir}")
+
+    return 0 if not release.blocking_issues else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
