@@ -106,6 +106,91 @@ class EvalAggregateReport:
     recommendation: str
     readiness_score: Dict[str, Any]
     report_hash: str
+    scenario_triage: Dict[str, str] = field(default_factory=dict)
+    quarantined_scenarios: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ReleaseReadinessProfile:
+    target_machine_label: str = "local_16gb"
+    max_allowed_peak_memory_mb: float = 16_384.0
+    max_allowed_mean_runtime_s: float = 30.0
+    required_pass_rate: float = 0.95
+    required_invariant_rate: float = 1.0
+    max_partial_finalization_rate: float = 0.05
+    max_dirty_repo_policy_misfires: int = 0
+    max_selector_refinement_exhaustions: int = 0
+    required_adversarial_pass_rate: float = 0.9
+    notes: str = "bounded-use release profile for local machine"
+
+
+@dataclass(frozen=True)
+class ThresholdTuningReport:
+    profile_name: str
+    threshold_margins: Dict[str, float]
+    top_failure_classes: Dict[str, int]
+    top_unstable_scenarios: List[str]
+    memory_headroom_mb: float
+    runtime_headroom_s: float
+    selector_refinement_pressure: float
+    dirty_repo_policy_trigger_frequency: float
+    adversarial_risk_trigger_frequency: float
+    report_hash: str
+
+
+@dataclass(frozen=True)
+class TelemetryDigest:
+    mean_runtime_s: float
+    median_runtime_s: float
+    max_runtime_s: float
+    peak_memory_range_mb: List[float]
+    witness_record_growth_rate: float
+    artifact_growth_per_task: float
+    rollback_frequency: float
+    partial_finalization_frequency: float
+    approval_pause_frequency: float
+    untrusted_risk_block_frequency: float
+    selector_refinement_frequency: float
+    dirty_repo_block_override_frequency: float
+    digest_hash: str
+
+
+@dataclass(frozen=True)
+class ReleaseSummary:
+    overall_readiness_verdict: str
+    score_by_dimension: Dict[str, float]
+    blocking_issues: List[str]
+    recommended_next_actions: List[str]
+    aggregate_report_hash: str
+    telemetry_digest_hash: str
+    override_flags: Dict[str, int]
+    summary_hash: str
+
+
+class ArtifactRetentionManager:
+    """Retention policy executor for evaluation artifacts (never touches witness ledger)."""
+
+    def apply(self, artifacts_dir: Path, policy: str, *, keep_last_n: int = 5) -> List[str]:
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        removed: List[str] = []
+        files = sorted([p for p in artifacts_dir.glob("*") if p.is_file()])
+        protected = {"witness.jsonl"}
+        if policy == "keep_all":
+            return removed
+        if policy == "keep_last_n_runs":
+            doomed = files[:-keep_last_n]
+        elif policy == "keep_failures_and_latest_success":
+            doomed = [p for p in files[:-1] if "failure" not in p.name]
+        elif policy == "keep_release_campaigns_only":
+            doomed = [p for p in files if "release" not in p.name]
+        else:
+            doomed = []
+        for path in doomed:
+            if path.name in protected:
+                continue
+            path.unlink(missing_ok=True)
+            removed.append(path.name)
+        return removed
 
 
 class EvalHarness:
@@ -195,6 +280,8 @@ class EvalHarness:
             refinement_distribution[refinement_bucket] = refinement_distribution.get(refinement_bucket, 0) + 1
 
         readiness = self._readiness_score(results, pass_rate)
+        quarantined = self._default_quarantine_map()
+        triage = self._scenario_triage(results, quarantined)
         recommendation = "pass_for_bounded_use" if pass_rate >= self.pass_threshold and not failure_histogram else "investigate"
         if pass_rate < 0.7:
             recommendation = "not_ready"
@@ -230,6 +317,8 @@ class EvalHarness:
             recommendation=recommendation,
             readiness_score=readiness,
             report_hash=report_hash,
+            scenario_triage=triage,
+            quarantined_scenarios=quarantined,
         )
 
     @staticmethod
@@ -297,6 +386,133 @@ class EvalHarness:
             verdict = "needs hardening"
         return {"dimensions": dimensions, "overall": round(overall, 4), "verdict": verdict}
 
+    @staticmethod
+    def _default_quarantine_map() -> Dict[str, str]:
+        return {"preflight_fail": "expected infrastructure fail for policy coverage"}
+
+    @staticmethod
+    def _scenario_triage(results: List[EvalRunResult], quarantined: Dict[str, str]) -> Dict[str, str]:
+        triage: Dict[str, str] = {}
+        by_scenario: Dict[str, List[EvalRunResult]] = {}
+        for item in results:
+            by_scenario.setdefault(item.scenario_id, []).append(item)
+        for scenario_id, runs in by_scenario.items():
+            if scenario_id in quarantined:
+                triage[scenario_id] = "quarantined"
+            elif all(run.success for run in runs):
+                triage[scenario_id] = "stable"
+            else:
+                triage[scenario_id] = "unstable"
+        return triage
+
+    def build_threshold_tuning_report(self, report: EvalAggregateReport, profile: ReleaseReadinessProfile) -> ThresholdTuningReport:
+        margins = {
+            "pass_rate_margin": report.pass_rate - profile.required_pass_rate,
+            "peak_memory_margin_mb": profile.max_allowed_peak_memory_mb - report.avg_peak_memory_mb,
+            "mean_runtime_margin_s": profile.max_allowed_mean_runtime_s - report.mean_runtime_s,
+            "partial_finalization_margin": profile.max_partial_finalization_rate - (
+                report.partial_finalization_count / max(1, report.run_count)
+            ),
+        }
+        payload = json.dumps({"margins": margins, "top_failures": report.failure_histogram}, sort_keys=True).encode("utf-8")
+        report_hash = sha256_bytes(payload)
+        return ThresholdTuningReport(
+            profile_name=profile.target_machine_label,
+            threshold_margins=margins,
+            top_failure_classes=dict(report.failure_histogram),
+            top_unstable_scenarios=list(report.unstable_scenarios),
+            memory_headroom_mb=margins["peak_memory_margin_mb"],
+            runtime_headroom_s=margins["mean_runtime_margin_s"],
+            selector_refinement_pressure=report.refinement_attempt_distribution.get("0", 0) / max(1, report.run_count),
+            dirty_repo_policy_trigger_frequency=report.dirty_repo_policy_trigger_count / max(1, report.run_count),
+            adversarial_risk_trigger_frequency=report.adversarial_risk_count / max(1, report.run_count),
+            report_hash=report_hash,
+        )
+
+    def build_telemetry_digest(self, results: List[EvalRunResult]) -> TelemetryDigest:
+        runtimes = [item.runtime_s for item in results] or [0.0]
+        peaks = [item.peak_memory_mb for item in results] or [0.0]
+        total = max(1, len(results))
+        rollback_freq = sum(1 for item in results if "rollback" in " ".join(item.notes).lower()) / total
+        partial_freq = sum(1 for item in results if item.final_status == TaskStatus.PARTIAL) / total
+        approval_freq = sum(1 for item in results if item.final_status == TaskStatus.AWAITING_APPROVAL) / total
+        risk_freq = sum(1 for item in results if item.runtime_flags.get("untrusted_content_risk_detected")) / total
+        refinement_freq = sum(1 for item in results if item.runtime_flags.get("selector_refinement_attempts", 0) > 0) / total
+        dirty_freq = sum(1 for item in results if item.runtime_flags.get("dirty_repo_policy_triggered")) / total
+        payload = {
+            "mean_runtime_s": statistics.mean(runtimes),
+            "max_runtime_s": max(runtimes),
+            "peak_max": max(peaks),
+            "risk_freq": risk_freq,
+        }
+        digest_hash = sha256_bytes(json.dumps(payload, sort_keys=True).encode("utf-8"))
+        return TelemetryDigest(
+            mean_runtime_s=statistics.mean(runtimes),
+            median_runtime_s=statistics.median(runtimes),
+            max_runtime_s=max(runtimes),
+            peak_memory_range_mb=[min(peaks), max(peaks)],
+            witness_record_growth_rate=0.0,
+            artifact_growth_per_task=sum(len(item.artifact_hashes) for item in results) / total,
+            rollback_frequency=rollback_freq,
+            partial_finalization_frequency=partial_freq,
+            approval_pause_frequency=approval_freq,
+            untrusted_risk_block_frequency=risk_freq,
+            selector_refinement_frequency=refinement_freq,
+            dirty_repo_block_override_frequency=dirty_freq,
+            digest_hash=digest_hash,
+        )
+
+    def build_release_summary(
+        self,
+        report: EvalAggregateReport,
+        digest: TelemetryDigest,
+        profile: ReleaseReadinessProfile,
+    ) -> ReleaseSummary:
+        blocking: List[str] = []
+        if report.pass_rate < profile.required_pass_rate:
+            blocking.append("pass_rate_below_threshold")
+        if report.avg_peak_memory_mb > profile.max_allowed_peak_memory_mb:
+            blocking.append("memory_above_threshold")
+        if report.mean_runtime_s > profile.max_allowed_mean_runtime_s:
+            blocking.append("runtime_above_threshold")
+        if report.partial_finalization_count / max(1, report.run_count) > profile.max_partial_finalization_rate:
+            blocking.append("partial_finalization_rate_high")
+        if report.failure_histogram:
+            blocking.append("invariant_violations_present")
+        override_flags = {
+            "dirty_repo_override_used": report.dirty_repo_policy_trigger_count,
+            "quarantine_present": len(report.quarantined_scenarios),
+            "relaxed_threshold_run": int(report.pass_rate < 1.0),
+        }
+        verdict = "bounded-use ready" if not blocking else "needs hardening"
+        actions = ["keep monitoring burn-in telemetry"] if not blocking else ["investigate blocking issues", "re-run release gate"]
+        payload = json.dumps({"blocking": blocking, "report_hash": report.report_hash, "digest_hash": digest.digest_hash}, sort_keys=True).encode("utf-8")
+        return ReleaseSummary(
+            overall_readiness_verdict=verdict,
+            score_by_dimension=dict(report.readiness_score.get("dimensions", {})),
+            blocking_issues=blocking,
+            recommended_next_actions=actions,
+            aggregate_report_hash=report.report_hash,
+            telemetry_digest_hash=digest.digest_hash,
+            override_flags=override_flags,
+            summary_hash=sha256_bytes(payload),
+        )
+
+    def evaluate_release_candidate(
+        self,
+        scenarios: List[EvalScenario],
+        config: EvalRunConfig,
+        profile: ReleaseReadinessProfile,
+    ) -> Tuple[EvalAggregateReport, ThresholdTuningReport, TelemetryDigest, ReleaseSummary]:
+        report = self.run_suite(scenarios, config, suite_id="release_candidate")
+        tuning = self.build_threshold_tuning_report(report, profile)
+        runs: List[EvalRunResult] = []
+        for scenario in scenarios:
+            runs.extend(self.run_scenario(scenario, EvalRunConfig(iterations=1)))
+        digest = self.build_telemetry_digest(runs)
+        release_summary = self.build_release_summary(report, digest, profile)
+        return report, tuning, digest, release_summary
+
 
 def basic_scenarios() -> List[EvalScenario]:
     return [
@@ -320,6 +536,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--suite", default="basic")
     parser.add_argument("--scenario", default=None)
     parser.add_argument("--iterations", type=int, default=1)
+    parser.add_argument("--profile", default="local_16gb")
     args = parser.parse_args(argv)
 
     scenarios = basic_scenarios()
@@ -335,7 +552,18 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     harness = EvalHarness(_unsupported_factory)
     try:
-        report = harness.run_suite(scenarios, EvalRunConfig(iterations=args.iterations), suite_id=args.suite)
+        config = EvalRunConfig(iterations=args.iterations)
+        if args.suite == "release_candidate":
+            profile = ReleaseReadinessProfile(target_machine_label=args.profile)
+            report, tuning, digest, release = harness.evaluate_release_candidate(scenarios, config, profile)
+            print(f"profile={profile.target_machine_label}")
+            print(f"release_verdict={release.overall_readiness_verdict}")
+            print(f"blocking_issues={len(release.blocking_issues)}")
+            print(f"telemetry_digest_hash={digest.digest_hash}")
+            print(f"release_summary_hash={release.summary_hash}")
+        else:
+            report = harness.run_suite(scenarios, config, suite_id=args.suite)
+            release = None
     except RuntimeError as exc:
         print(f"evaluation_error={exc}")
         return 2
@@ -348,6 +576,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"aggregate_report_hash={report.report_hash}")
 
     if report.pass_rate < harness.pass_threshold or report.failure_histogram:
+        return 2
+    if args.suite == "release_candidate" and release and release.blocking_issues:
         return 2
     return 0
 

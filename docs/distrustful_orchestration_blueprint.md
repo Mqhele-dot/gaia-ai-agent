@@ -351,3 +351,37 @@ Use `memory_profile_notes()` for built-in operator defaults:
 - repeated ambiguity with refinement exhaustion
 - dirty-repo blocked/override policy cases
 - structural isolation success path
+
+## Release-readiness workflow
+- Use `ReleaseReadinessProfile` for machine-specific bounded-use gates.
+- Run release-candidate burn-in with:
+  - `python -m gaia.gaia_core.run_eval --suite release_candidate --iterations <N> --profile local_16gb`
+- Gate with:
+  - `python -m gaia.gaia_core.run_release_gate --profile local_16gb`
+- Release gate exits zero only if no blocking issues remain.
+
+## Machine profile concept
+- Profile fields include pass-rate, invariant, runtime, memory, partial-finalization, dirty-policy, and refinement thresholds.
+- Profiles are deterministic and explicit; no hidden auto-tuning.
+
+## Retention policy model
+- `ArtifactRetentionManager` policies:
+  - `keep_all`
+  - `keep_last_n_runs`
+  - `keep_failures_and_latest_success`
+  - `keep_release_campaigns_only`
+- Witness append-only ledger is protected from retention pruning.
+
+## Quarantine and override semantics
+- Scenarios may be triaged as `stable`, `unstable`, or `quarantined`.
+- Quarantined scenarios remain visible in aggregate reports with explicit reasons.
+- Override usage (e.g., dirty-repo override, relaxed threshold runs) is surfaced in release summaries and does not count as clean success.
+
+## Final release-blocking invariants
+- no success without witnessed verification
+- no finalization success without verified commit + note path
+- no silent dirty-state leaks
+- no mutation when dirty policy forbids it
+- no untrusted-content execution-path promotion
+- no selector ambiguity mutation without unique proof
+- no hidden partial failures in release summaries

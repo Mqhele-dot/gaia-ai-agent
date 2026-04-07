@@ -4,11 +4,13 @@ from dataclasses import dataclass
 
 from gaia.gaia_core.distrustful_agent import TaskExecutionResult, TaskStatus
 from gaia.gaia_core.eval_harness import (
+    ArtifactRetentionManager,
     EvalHarness,
     EvalRunConfig,
     EvalRunResult,
     EvalScenario,
     FailureInjectionConfig,
+    ReleaseReadinessProfile,
 )
 
 
@@ -144,3 +146,42 @@ def test_burn_in_mixed_outcomes_aggregated() -> None:
     assert report.final_status_distribution[TaskStatus.COMPLETED] == 1
     assert report.final_status_distribution[TaskStatus.FAILED] == 1
     assert report.final_status_distribution[TaskStatus.PARTIAL] == 1
+
+
+def test_threshold_tuning_report_is_deterministic() -> None:
+    harness = EvalHarness(lambda _: FakeService())
+    runs = [EvalRunResult("s", "r1", TaskStatus.COMPLETED, True, None, "tip", None, 1, 1, [], [], [])]
+    report = harness.aggregate(runs, suite_id="x")
+    profile = ReleaseReadinessProfile()
+    one = harness.build_threshold_tuning_report(report, profile)
+    two = harness.build_threshold_tuning_report(report, profile)
+    assert one.report_hash == two.report_hash
+
+
+def test_telemetry_digest_is_deterministic() -> None:
+    harness = EvalHarness(lambda _: FakeService())
+    runs = [
+        EvalRunResult("s", "r1", TaskStatus.COMPLETED, True, None, "tip", None, 1, 1, [], [], [], runtime_flags={}),
+        EvalRunResult("s", "r2", TaskStatus.PARTIAL, False, None, "tip", None, 2, 2, [], [], [], runtime_flags={"dirty_repo_policy_triggered": True}),
+    ]
+    one = harness.build_telemetry_digest(runs)
+    two = harness.build_telemetry_digest(runs)
+    assert one.digest_hash == two.digest_hash
+
+
+def test_quarantine_visibility_in_report() -> None:
+    harness = EvalHarness(lambda _: FakeService())
+    runs = [EvalRunResult("preflight_fail", "r1", TaskStatus.HALTED, False, None, "tip", None, 1, 1, [], [], [])]
+    report = harness.aggregate(runs, suite_id="x")
+    assert report.scenario_triage["preflight_fail"] == "quarantined"
+    assert "preflight_fail" in report.quarantined_scenarios
+
+
+def test_retention_policy_never_deletes_witness(tmp_path) -> None:
+    mgr = ArtifactRetentionManager()
+    (tmp_path / "witness.jsonl").write_text("{}", encoding="utf-8")
+    (tmp_path / "old1.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "old2.json").write_text("{}", encoding="utf-8")
+    removed = mgr.apply(tmp_path, "keep_last_n_runs", keep_last_n=1)
+    assert "witness.jsonl" not in removed
+    assert (tmp_path / "witness.jsonl").exists()
