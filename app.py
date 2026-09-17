@@ -1,7 +1,4 @@
-from flask import Flask, render_template
+"""Repository entrypoint for Gaia Mission Control."""
+from gaia.app import app
 
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    return render_template('index.html')
+__all__ = ["app"]
