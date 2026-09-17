@@ -1,3 +1,5 @@
-flask
-openai
-requests
+flask>=3.0,<4
+gunicorn>=22,<24
+python-dotenv>=1.0,<2
+requests>=2.31,<3
+pytest>=8,<9
