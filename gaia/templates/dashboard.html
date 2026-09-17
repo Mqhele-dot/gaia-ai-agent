@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gaia Mission Control</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Gaia</h1>
+      <span class="sub">Mission Control · {{ version }}</span>
+    </div>
+    <div class="top-actions">
+      <span id="status-pill" class="pill">Loading</span>
+      <button id="refresh">Refresh</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero panel">
+      <div>
+        <p class="eyebrow">AUTONOMY</p>
+        <h2 id="autonomy-state">Checking…</h2>
+        <p id="autonomy-detail" class="muted">Waiting for status.</p>
+      </div>
+      <div class="pipeline" id="pipeline">
+        <span data-stage="research">Research</span><b>→</b>
+        <span data-stage="capsule">Capsule</span><b>→</b>
+        <span data-stage="analysis">Analyze</span><b>→</b>
+        <span data-stage="simulation">Simulate</span><b>→</b>
+        <span data-stage="evaluation">Evaluate</span>
+      </div>
+      <div class="runbox">
+        <input id="run-topic" placeholder="Optional research topic">
+        <button id="run-now" class="primary">Run Gaia once</button>
+      </div>
+    </section>
+
+    <section class="metrics" id="metrics"></section>
+
+    <section class="grid two">
+      <article class="panel">
+        <div class="section-head"><h3>Create capsule</h3><span class="muted">Operator</span></div>
+        <input id="cap-title" placeholder="Title (optional)">
+        <textarea id="cap-text" rows="7" placeholder="Enter an idea, finding, or proposal"></textarea>
+        <div class="row">
+          <input id="cap-tag" placeholder="Tag" value="general">
+          <button id="save-cap" class="primary">Save</button>
+          <button id="analyze-cap">Analyze</button>
+          <button id="simulate-cap">Simulate</button>
+        </div>
+        <pre id="action-output" class="output">Ready.</pre>
+      </article>
+
+      <article class="panel">
+        <div class="section-head"><h3>Research</h3><span class="muted">Crossref</span></div>
+        <div class="row">
+          <input id="research-query" placeholder="e.g. sodium ion battery storage">
+          <button id="research-go" class="primary">Search</button>
+        </div>
+        <div id="research-results" class="stack empty">No research loaded.</div>
+      </article>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <div class="section-head"><h3>Capsules</h3><span id="capsule-count" class="muted">0</span></div>
+        <div id="capsules" class="stack empty">No capsules yet.</div>
+      </article>
+
+      <article class="panel">
+        <div class="section-head"><h3>Activity</h3><a href="/api/export/events">Download JSONL</a></div>
+        <div id="events" class="stack empty">No events yet.</div>
+      </article>
+    </section>
+
+    <section class="panel settings">
+      <div class="section-head"><h3>Controls</h3><span class="muted">Persisted settings</span></div>
+      <label><input type="checkbox" id="set-autonomy"> Autonomous scheduler</label>
+      <label><input type="checkbox" id="set-research"> Research</label>
+      <label><input type="checkbox" id="set-analysis"> Analysis</label>
+      <label><input type="checkbox" id="set-simulation"> Simulation</label>
+      <div class="admin row">
+        <input id="admin-token" type="password" placeholder="Admin token">
+        <button id="halt" class="danger">Halt</button>
+        <button id="resume">Resume</button>
+      </div>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>
