@@ -10,7 +10,7 @@
     }
   },
   "containerEnv": {
-    "GAIA_AUTONOMY_ENABLED": "0",
+    "GAIA_AUTONOMY_ENABLED": "1",
     "PORT": "8000"
   }
 }
