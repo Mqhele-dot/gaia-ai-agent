@@ -5,7 +5,10 @@ import os
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, render_template, request, send_file
+
+load_dotenv()
 
 from . import __version__
 from .core.engine import ENGINE
@@ -78,6 +81,8 @@ def api_settings() -> Response:
         return jsonify(load_settings())
     payload = request.get_json(silent=True) or {}
     settings = save_settings(payload)
+    if settings.get("autonomy_enabled"):
+        ENGINE.start()
     append_event(actor="operator", event_type="settings", action="update", status="ok", summary="Settings updated", data=settings)
     return jsonify(settings)
 
@@ -184,6 +189,8 @@ def api_resume() -> Response:
     if not _admin_ok():
         return jsonify({"error": "unauthorized"}), 403
     save_state({"halted": False})
+    if load_settings().get("autonomy_enabled"):
+        ENGINE.start()
     append_event(actor="operator", event_type="admin", action="resume", status="ok", summary="Gaia resumed")
     return jsonify({"halted": False})
 
